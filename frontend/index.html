@@ -190,16 +190,17 @@
                     return;
                 }
                 if (charIndex <= fullText.length) {
+                    // 每次跳 50 个字符，几乎瞬间完成，保留流式感
                     const textSlice = fullText.substring(0, charIndex);
                     element.innerHTML = DOMPurify.sanitize(marked.parse(textSlice));
                     scrollToBottom();
-                    charIndex += 3;
+                    charIndex += 50;
                 } else {
                     clearInterval(typewriterTimer);
                     element.classList.remove('typing-indicator');
                     htmlRenderCache[currentThreadId] = chatContainer.innerHTML;
                 }
-            }, 15);
+            }, 10);
         }
 
         /**

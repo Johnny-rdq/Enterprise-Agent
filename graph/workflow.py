@@ -85,14 +85,19 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
     prompt = ChatPromptTemplate.from_messages([
         ("system", """你是一个精准的路由分类器。分析用户的输入，只返回一个词：
 
-1. 仅当用户是【纯粹闲聊、问候、或询问公司内部规定】时，返回 chat_rag。
-   例如："你好"、"哈哈"、"迟到怎么罚？"、"公司福利有哪些？"
+1. 以下情况返回 chat_rag（走快速通道，不写代码）：
+   - 闲聊、问候（"你好"、"哈哈"）
+   - 画图、写诗、写信、写文章（"画个爱心"、"写首情诗"）
+   - 公司内部规定问答（"迟到怎么罚？"）
+   - 普通知识问答、解释概念（"什么是AI？"）
+   - 简单数学、翻译、建议咨询
 
-2. 其他所有情况，包括【搜新闻、查资料、实时信息、写代码、开发项目】，
-   一律返回 planner。
-   例如："今天有什么科技新闻？"、"帮我写个爬虫"、"马斯克最新消息"
+2. 只有以下情况才返回 planner（走编码管线）：
+   - 明确要求"写代码"、"写个程序"、"开发"（"帮我写个爬虫"）
+   - 需要搜索实时新闻、最新消息（"今天有什么科技新闻"）
+   - 要求"创建项目"、"做个网站"、"写个游戏"
 
-只能返回一个词：chat_rag 或 planner，不要加任何标点或空格。"""),
+只能返回一个词：chat_rag 或 planner。"""),
         ("user", "{input}")
     ])
 
@@ -247,8 +252,10 @@ def save_code_node(state: AgentState) -> dict:
     output_dir = "generated_code"
     os.makedirs(output_dir, exist_ok=True)
 
-    # 从任务描述中提取文件名（取前几个有意义的词）
-    safe_name = re.sub(r'[^\w一-鿿]', '_', task)[:30]
+    # 从任务中提取简短名称
+    safe_name = re.sub(r'[^\w]', '_', task)[:20].strip('_')
+    if not safe_name:
+        safe_name = "script"
     timestamp = datetime.now().strftime("%m%d_%H%M%S")
     filename = f"{output_dir}/{safe_name}_{timestamp}.py"
 
