@@ -127,13 +127,31 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
 
 def chat_rag_node(state: AgentState) -> dict:
     """
-    处理不需要写代码的简单请求（三层兜底）：
-    1. 先查本地知识库（RAG），看看公司文档里有没有答案
+    处理不需要写代码的简单请求（四层智能分流）：
+    0. 纯闲聊/问候 → 跳过所有搜索，直接 LLM 聊天
+    1. 公司相关？→ 查 RAG 文档库
     2. RAG 没命中 → 联网搜索（DuckDuckGo）
-    3. 网络也没结果 → LLM 凭自身知识直接回答
+    3. 网络也没结果 → LLM 凭自身知识回答
     """
     t_start = time.time()
     task = state["task"]
+
+    # DP: 闲聊快速通道 — 问候/寒暄不触发任何搜索，直接聊天
+    _chat_patterns = ["你好", "嗨", "哈哈", "谢谢", "再见", "拜拜", "早上好", "晚上好",
+                      "hello", "hi", "hey", "thanks", "bye", "你是谁", "你叫什么"]
+    is_pure_chat = any(p in task.lower() for p in _chat_patterns) and len(task) < 20
+
+    if is_pure_chat:
+        print(f"[ChatRAG] 💬 纯闲聊，跳过所有搜索，直接 LLM 聊天...")
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "你是一个友好幽默的 AI 助手，请用中文简短回复用户的问候。"),
+            ("user", "{input}")
+        ])
+        chain = prompt | llm
+        response = chain.invoke({"input": task})
+        print(f"[ChatRAG] ⏱️  总耗时: {time.time()-t_start:.1f}秒（闲聊模式）")
+        return {"research_info": response.content}
+
     print(f"\n[ChatRAG] 📍 收到问题: {task[:80]}...")
     print(f"[ChatRAG] 🔍 第一步：查本地知识库...")
     t0 = time.time()
@@ -260,8 +278,8 @@ def save_code_node(state: AgentState) -> dict:
             lines = lines[:-1]
         code = "\n".join(lines)
 
-    # DP: 自动创建 output 目录
-    output_dir = "generated_code"
+    # DP: 创建 output 目录，使用 os.path 保证跨平台兼容
+    output_dir = os.path.join(os.getcwd(), "generated_code")
     os.makedirs(output_dir, exist_ok=True)
 
     # DP: 从任务描述提取文件名 + 时间戳
@@ -269,26 +287,28 @@ def save_code_node(state: AgentState) -> dict:
     if not safe_name:
         safe_name = "script"
     timestamp = datetime.now().strftime("%m%d_%H%M%S")
-    filename = f"{output_dir}/{safe_name}_{timestamp}.py"
+    filename = os.path.join(output_dir, f"{safe_name}_{timestamp}.py")
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(code)
 
-    print(f"[SaveCode] ✅ 代码已保存到: {filename}（{len(code)} 字符）")
+    abs_path = os.path.abspath(filename)
+    print(f"[SaveCode] ✅ 代码已保存到: {abs_path}（{len(code)} 字符）")
 
-    # DP: 自动用系统默认程序打开（Windows → VS Code/记事本，Mac → 默认编辑器）
+    # DP: 自动用系统默认程序打开（os.startfile 在 Windows 上可打开任何文件）
     try:
         if os.name == "nt":
-            os.startfile(os.path.abspath(filename))
-            print(f"[SaveCode] 📂 已自动打开文件。")
-        elif os.uname().sysname == "Darwin":
-            subprocess.run(["open", filename])
+            os.startfile(abs_path)
+            print(f"[SaveCode] 📂 已自动打开文件: {abs_path}")
+        elif hasattr(os, 'uname') and os.uname().sysname == "Darwin":
+            subprocess.run(["open", abs_path])
         else:
-            subprocess.run(["xdg-open", filename])
+            subprocess.run(["xdg-open", abs_path])
     except Exception as e:
-        print(f"[SaveCode] 无法自动打开文件: {e}")
+        print(f"[SaveCode] ⚠️  无法自动打开（文件已保存，请手动打开）: {e}")
+        print(f"[SaveCode] 文件路径: {abs_path}")
 
-    return {"research_info": f"代码已保存到 `{filename}` 并自动打开。"}
+    return {"research_info": f"✅ 代码已保存到 `{abs_path}`，已自动打开编辑器。"}
 
 
 # ==================== ⑤ 调研后置判断：需要写代码吗？ ====================

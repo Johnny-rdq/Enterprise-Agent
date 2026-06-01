@@ -3,25 +3,13 @@
 RAG 工具 — 本地知识库检索（阿里云 DashScope Embedding API 版）
 ================================================================================
 
-DP 改动：
-- 从 HuggingFace 本地模型（400MB，加载15秒）切换为 DashScope TextEmbedding API
-- 使用 dashscope.TextEmbedding 原生 API（不走 OpenAI 兼容接口，因为兼容接口无 /v1/embeddings）
-- 自建 DashScopeEmbeddings 类实现 LangChain 的 Embeddings 接口
-- 懒加载：启动时不加载任何模型，首次调用 RAG 时才构建/加载向量库
-- 自动版本检测：换了 Embedding 模型自动重建向量库
+DP 优化：所有重型 import 都延迟到首次使用时才加载，启动快 10 秒。
+首次 RAG 调用仍需 4~8 秒构建向量库（API 调用），之后秒回。
 """
 
 import os
 import shutil
 import time
-from typing import List
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
-from langchain_core.embeddings import Embeddings
-from dashscope import TextEmbedding
-
-from core.config import settings
 
 PERSIST_DIRECTORY = "./chroma_db"
 DOC_PATH = "./docs/company_docs.txt"
@@ -31,47 +19,52 @@ CURRENT_VERSION = "v2"
 _vector_db = None
 
 
-# DP: 自定义 LangChain Embedding 包装类 — 调用阿里云原生 TextEmbedding API
-class DashScopeEmbeddings(Embeddings):
-    """
-    LangChain 兼容的 DashScope Embedding 包装类。
-    调用阿里云原生 TextEmbedding API（text-embedding-v2），
-    模型小、速度快、免下载，复用已有 API Key。
-    """
+def _get_embeddings():
+    """DP: 延迟导入重型库，只在首次调用 RAG 时才加载"""
+    from langchain_core.embeddings import Embeddings
+    from dashscope import TextEmbedding
+    from core.config import settings
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """批量把文档转成向量（构建/更新知识库时用）"""
-        resp = TextEmbedding.call(
-            model="text-embedding-v2",
-            input=texts,
-            api_key=settings.API_KEY,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Embedding API 调用失败: {resp.message}")
-        return [item["embedding"] for item in resp.output["embeddings"]]
+    class DashScopeEmbeddings(Embeddings):
+        """LangChain 兼容的 DashScope Embedding 包装类"""
 
-    def embed_query(self, text: str) -> List[float]:
-        """把单个查询文本转成向量（检索时用）"""
-        resp = TextEmbedding.call(
-            model="text-embedding-v2",
-            input=[text],
-            api_key=settings.API_KEY,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Embedding API 调用失败: {resp.message}")
-        return resp.output["embeddings"][0]["embedding"]
+        def embed_documents(self, texts):
+            resp = TextEmbedding.call(
+                model="text-embedding-v2",
+                input=texts,
+                api_key=settings.API_KEY,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"Embedding API 调用失败: {resp.message}")
+            return [item["embedding"] for item in resp.output["embeddings"]]
+
+        def embed_query(self, text):
+            resp = TextEmbedding.call(
+                model="text-embedding-v2",
+                input=[text],
+                api_key=settings.API_KEY,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"Embedding API 调用失败: {resp.message}")
+            return resp.output["embeddings"][0]["embedding"]
+
+    return DashScopeEmbeddings()
 
 
 def _get_vector_db():
-    """DP: 懒加载向量数据库 — 首次调用才初始化，启动不等待"""
+    """DP: 懒加载向量数据库 — 首次调用才初始化，后续直接读缓存"""
     global _vector_db
 
     if _vector_db is not None:
         return _vector_db
 
-    embeddings = DashScopeEmbeddings()
+    # DP: 只有在真正需要时才导入这些重库
+    from langchain_community.document_loaders import TextLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_chroma import Chroma
 
-    # DP: 版本检测 — 换了 Embedding 模型或数据库损坏时自动重建
+    embeddings = _get_embeddings()
+
     need_rebuild = not (os.path.exists(PERSIST_DIRECTORY) and os.path.exists(VERSION_FILE))
     if not need_rebuild:
         with open(VERSION_FILE, "r") as f:
@@ -82,6 +75,7 @@ def _get_vector_db():
             shutil.rmtree(PERSIST_DIRECTORY)
 
         print("[RAG] 正在通过 DashScope API 构建向量数据库...")
+        t0 = time.time()
         if not os.path.exists(DOC_PATH):
             raise FileNotFoundError(f"文档文件不存在: {DOC_PATH}")
 
@@ -89,42 +83,52 @@ def _get_vector_db():
         documents = loader.load()
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=20)
         chunks = text_splitter.split_documents(documents)
-        print(f"[RAG] 文档切分为 {len(chunks)} 段，正在调用 Embedding API 生成向量...")
+        print(f"[RAG] 文档切分为 {len(chunks)} 段，调用 Embedding API 生成向量...")
 
         _vector_db = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=PERSIST_DIRECTORY,
+            documents=chunks, embedding=embeddings, persist_directory=PERSIST_DIRECTORY,
         )
         os.makedirs(PERSIST_DIRECTORY, exist_ok=True)
         with open(VERSION_FILE, "w") as f:
             f.write(CURRENT_VERSION)
-        print("[RAG] 向量数据库构建完成！")
+        print(f"[RAG] 向量数据库构建完成（耗时 {time.time()-t0:.1f}秒）")
     else:
-        print("[RAG] 加载已有向量数据库...")
-        _vector_db = Chroma(
-            persist_directory=PERSIST_DIRECTORY,
-            embedding_function=embeddings,
-        )
-        print("[RAG] 向量数据库就绪。")
+        t0 = time.time()
+        print("[RAG] 加载已有向量数据库（秒级）...")
+        _vector_db = Chroma(persist_directory=PERSIST_DIRECTORY, embedding_function=embeddings)
+        print(f"[RAG] 向量数据库就绪（耗时 {time.time()-t0:.1f}秒）")
 
     return _vector_db
 
 
+# DP: 公司文档相关的关键词 — 命中这些才触发 RAG，闲聊不触发
+_RAG_KEYWORDS = [
+    "迟到", "惩罚", "罚款", "福利", "CEO", "老板", "水豚", "密码", "机房",
+    "考勤", "打卡", "年假", "火星日", "补贴", "生发水", "食堂", "深渊",
+    "极客", "公司", "内部", "机密", "规定", "制度", "门禁", "工资",
+    "奖金", "bug修复", "炸酱面", "拖鞋", "猛犸象",
+]
+
+
+def _is_company_question(query: str) -> bool:
+    """DP: 快速判断是否可能是公司文档相关的问题，避免闲聊也触发 RAG"""
+    return any(kw in query for kw in _RAG_KEYWORDS)
+
+
 def search_knowledge_base(query: str) -> str:
-    """
-    在本地知识库中搜索。首次调用构建向量库（API 调用），后续秒回。
-    """
-    t0 = time.time()
+    """在本地知识库中搜索。首次调用构建向量库，后续秒回。"""
+    # DP: 快速预判 — 跟公司文档无关的问题直接跳过，不浪费 API 调用
+    if not _is_company_question(query):
+        print(f"   -> [RAG Search] 跳过（非公司文档问题）: {query}")
+        return "本地知识库中未找到相关机密信息。"
+
     print(f"   -> [RAG Search] 搜索: {query}")
     db = _get_vector_db()
-    t1 = time.time()
+    t0 = time.time()
     docs = db.similarity_search(query, k=3)
-    print(f"   -> [RAG Search] ⏱️  向量检索耗时: {time.time()-t1:.1f}秒（DB加载: {t1-t0:.1f}秒）")
+    print(f"   -> [RAG Search] 向量检索耗时: {time.time()-t0:.1f}秒")
 
     if not docs:
         return "本地知识库中未找到相关机密信息。"
 
-    return "\n\n".join(
-        [f"片段 {i + 1}:\n{doc.page_content}" for i, doc in enumerate(docs)]
-    )
+    return "\n\n".join([f"片段 {i+1}:\n{doc.page_content}" for i, doc in enumerate(docs)])
