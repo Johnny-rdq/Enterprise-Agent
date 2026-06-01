@@ -21,8 +21,25 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from tools.rag_tool import search_knowledge_base
-from tools.browser_tool import search_baidu, search_bilibili
 from core.config import settings
+
+# DP: browser_tool（含 Playwright）延迟导入，启动时不加载 ~2秒的 Playwright
+_search_baidu = None
+_search_bilibili = None
+
+def _get_baidu():
+    global _search_baidu
+    if _search_baidu is None:
+        from tools.browser_tool import search_baidu
+        _search_baidu = search_baidu
+    return _search_baidu
+
+def _get_bilibili():
+    global _search_bilibili
+    if _search_bilibili is None:
+        from tools.browser_tool import search_bilibili
+        _search_bilibili = search_bilibili
+    return _search_bilibili
 
 llm = ChatOpenAI(
     api_key=settings.API_KEY,
@@ -46,8 +63,20 @@ def search_internal_docs(query: str) -> str:
     return search_knowledge_base(query)
 
 
-# DP: 四个工具全部绑定，LLM 自主决定用哪个
-tools = [search_web, search_internal_docs, search_baidu, search_bilibili]
+@tool
+def search_baidu_proxy(keyword: str) -> str:
+    """【百度搜索工具】搜索中文新闻、实时热点、国内动态时优先使用。"""
+    return _get_baidu().invoke({"keyword": keyword})
+
+
+@tool
+def search_bilibili_proxy(keyword: str) -> str:
+    """【B站搜索工具】搜索视频、直播、游戏攻略、UP主时使用。"""
+    return _get_bilibili().invoke({"keyword": keyword})
+
+
+# DP: 四个工具绑定（baidu/bilibili 用代理，首次调用才加载 Playwright）
+tools = [search_web, search_internal_docs, search_baidu_proxy, search_bilibili_proxy]
 llm_with_tools = llm.bind_tools(tools)
 
 
@@ -117,10 +146,10 @@ def research_node(state: dict):
         # 根据工具名称分发调用
         if tool_name == "search_internal_docs":
             tool_result = search_internal_docs.invoke(args_dict)
-        elif tool_name == "search_baidu":
-            tool_result = search_baidu.invoke(args_dict)
-        elif tool_name == "search_bilibili":
-            tool_result = search_bilibili.invoke(args_dict)
+        elif "baidu" in tool_name:
+            tool_result = search_baidu_proxy.invoke(args_dict)
+        elif "bilibili" in tool_name:
+            tool_result = search_bilibili_proxy.invoke(args_dict)
         else:
             tool_result = search_web.invoke(args_dict)
 
