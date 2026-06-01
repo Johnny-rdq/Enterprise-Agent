@@ -15,3 +15,6 @@ workspace/
 # 5. 运行时数据
 data/
 temp_execution.py
+
+# 6. AI 生成的代码输出
+generated_code/
