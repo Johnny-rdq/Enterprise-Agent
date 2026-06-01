@@ -10,10 +10,11 @@
 - search_baidu()        → Playwright 百度抓取（中文实时信息最强）
 - search_bilibili()     → Playwright B站抓取（视频/直播/游戏攻略）
 
-工作流程：
-1. LLM 收到任务和计划 → 决定用哪个工具
-2. 执行工具调用 → 获取原始资料
-3. LLM 整理资料 → 输出结构化报告给 Coder
+DP 改动：
+- 所有 LLM 提示词从英文改为中文，强制工具调用更有效
+- 新增代码任务 vs 搜索任务的分支逻辑（搜索任务强制调工具，代码任务不强制）
+- 简单查询跳过 LLM 总结，直接返回原始搜索结果（省 3~8 秒）
+- 新增兜底：LLM 不调工具时强制 DuckDuckGo 搜索
 """
 
 from langchain_openai import ChatOpenAI
@@ -45,7 +46,7 @@ def search_internal_docs(query: str) -> str:
     return search_knowledge_base(query)
 
 
-# 把所有工具绑定到 LLM，让模型可以自主决定调用哪个
+# DP: 四个工具全部绑定，LLM 自主决定用哪个
 tools = [search_web, search_internal_docs, search_baidu, search_bilibili]
 llm_with_tools = llm.bind_tools(tools)
 
@@ -56,17 +57,17 @@ def research_node(state: dict):
     """
     被 LangGraph 工作流调用的入口函数。
     输入：state["task"]、state["plan"]
-    输出：{"research_info": "..."} → 调研报告，传给 Coder
+    输出：{"research_info": "..."} → 调研报告，传给 Coder 或前端
     """
     task = state.get("task", "")
     plan = state.get("plan", "")
     history_info = state.get("research_info", "")
 
-    # 判断任务类型：简单问答/搜索（必须搜） vs 编码任务（搜不搜看情况）
+    # DP: 先判断任务类型 — 搜索类（强制搜）vs 编码类（不强制搜）
     is_simple = "无需编码" in plan or "SIMPLE_QUERY" in plan
 
     if is_simple:
-        # 简单问答/搜索类 → 必须搜索，获取最新信息
+        # DP: 简单问答/搜索类 → 必须搜索，获取最新信息
         prompt = f"""
 你是"极客科技"的专属 AI 情报分析师。
 
@@ -83,7 +84,7 @@ def research_node(state: dict):
 ⚠️ 死命令：必须先搜再回答，严禁凭自己的知识直接回答！
 """
     else:
-        # 编码任务 → 搜不搜让 LLM 自己判断，不强制
+        # DP: 编码任务 → 搜不搜让 LLM 自己判断，不强制
         prompt = f"""
 你是"极客科技"的专属 AI 情报分析师。
 
@@ -100,7 +101,6 @@ def research_node(state: dict):
 可用工具：search_baidu(中文)、search_bilibili(视频)、search_internal_docs(内部文档)、search_web(通用)
 """
 
-
     # 第一轮：让 LLM 决定用什么工具
     print(f"\n{'='*60}")
     print(f"[Researcher] 🧠 LLM 正在决定使用哪个搜索工具...")
@@ -108,7 +108,6 @@ def research_node(state: dict):
     msg = llm_with_tools.invoke(prompt)
 
     if msg.tool_calls:
-        # 获取第一个工具调用的信息（LangChain 格式）
         tool_name = msg.tool_calls[0]["name"]
         args_dict = msg.tool_calls[0]["args"]
         print(f"[Researcher] ✅ LLM 决定调用: {tool_name}")
@@ -125,21 +124,19 @@ def research_node(state: dict):
         else:
             tool_result = search_web.invoke(args_dict)
 
+        # DP: 完整打印搜索结果，不再截断
         print(f"[Researcher] ✅ 搜索完成！")
         print(f"[Researcher] 原始搜索结果（完整内容，共 {len(str(tool_result))} 字符）:")
         print(f"{'─'*60}")
         print(tool_result)
         print(f"{'─'*60}")
 
-        # 判断是否需要 LLM 二次整理（编码任务需要，简单查询跳过省时间）
-        is_simple = "无需编码" in plan or "SIMPLE_QUERY" in plan
-
+        # DP: 简单查询跳过 LLM 总结，直接返回原始结果（省 3~8 秒）
         if is_simple:
-            # 简单查询：跳过 LLM 总结，直接返回原始搜索结果（省 3~8 秒）
             print(f"[Researcher] ⚡ 简单查询，跳过LLM总结，直接返回搜索结果！")
             return {"research_info": tool_result}
         else:
-            # 编码任务：让 LLM 整理成结构化报告，方便 Coder 理解
+            # DP: 编码任务 — LLM 整理成结构化报告方便 Coder 理解
             print(f"[Researcher] 📝 编码任务，LLM正在整理搜索结果...")
             final_prompt = f"""
 你是极客科技的情报分析师。请根据以下搜索结果回答用户问题。
@@ -159,9 +156,8 @@ def research_node(state: dict):
             return {"research_info": final_msg.content}
 
     else:
-        # LLM 认为不需要工具，但仍然要求它搜索（兜底）
-        print("      -> [Researcher] LLM未调用工具，强制要求重新搜索...")
-        # 强制用 DuckDuckGo 搜一次作为兜底
+        # DP: LLM 没调工具 — 强制用 DuckDuckGo 搜一次兜底
+        print("      -> [Researcher] LLM未调用工具，强制 DuckDuckGo 兜底搜索...")
         try:
             fallback_result = search_web.invoke({"query": task})
             final_prompt = f"""

@@ -4,8 +4,10 @@
 ================================================================================
 
 职责：检查代码执行结果，决定通过还是打回。
-- 执行成功 → 返回 "PASS"，管线结束
+- 执行成功 → 返回 "PASS"，管线进入 SaveCode
 - 执行失败 → 分析错误原因，打回 Coder 重写（最多 2 次）
+
+DP 改动：提示词从英文改为中文
 """
 
 from langchain_openai import ChatOpenAI
@@ -15,7 +17,7 @@ llm = ChatOpenAI(
     api_key=settings.API_KEY,
     base_url=settings.BASE_URL,
     model=settings.MODEL_NAME,
-    temperature=0.1     # 低温度，审查要精准
+    temperature=0.1     # DP: 低温度，审查要精准
 )
 
 
@@ -29,12 +31,12 @@ def review_node(state: dict):
 
     exec_result = state.get("execution_result", "")
 
-    # 快速通道：执行成功直接通过
+    # DP: 快速通道 — 执行成功直接 PASS
     if "✅ 运行成功" in exec_result or "success" in exec_result.lower():
         print("      -> 代码执行成功，PASS！")
         return {"feedback": "PASS"}
 
-    # 失败 → 分析根因，给出修复建议
+    # DP: 失败 → 分析根因，给出修复建议（中文）
     prompt = f"""你是一个严格的代码审查员。
 
 代码运行结果/错误信息：

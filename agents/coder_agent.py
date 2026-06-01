@@ -4,7 +4,10 @@
 ================================================================================
 
 职责：根据计划（plan）和调研资料（research_info）编写 Python 代码。
-要求输出纯代码，不带 Markdown 包裹。
+
+DP 改动：
+- 提示词从英文改为中文
+- 要求输出纯代码，严禁用 ```python 包裹（避免 SyntaxError）
 """
 
 from langchain_openai import ChatOpenAI
@@ -14,7 +17,7 @@ llm = ChatOpenAI(
     api_key=settings.API_KEY,
     base_url=settings.BASE_URL,
     model=settings.MODEL_NAME,
-    temperature=0.1     # 低温度，让代码更稳定、少出错
+    temperature=0.1     # DP: 低温度，代码质量更稳定
 )
 
 
@@ -26,6 +29,7 @@ def code_node(state: dict):
     """
     print("\n[Coder] 正在根据计划和调研资料编写代码...")
 
+    # DP: 提示词全部中文，强制输出纯代码
     prompt = f"""你是一个顶级的 Python 程序员。
 
 用户需求：{state["task"]}

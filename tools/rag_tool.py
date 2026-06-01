@@ -3,10 +3,12 @@
 RAG 工具 — 本地知识库检索（阿里云 DashScope Embedding API 版）
 ================================================================================
 
-使用 dashscope.TextEmbedding 原生 API（不走兼容接口），
-无需下载本地模型，API 调用秒级返回向量。
-
-首次使用自动从 docs/company_docs.txt 构建向量库，之后持久化到 chroma_db/。
+DP 改动：
+- 从 HuggingFace 本地模型（400MB，加载15秒）切换为 DashScope TextEmbedding API
+- 使用 dashscope.TextEmbedding 原生 API（不走 OpenAI 兼容接口，因为兼容接口无 /v1/embeddings）
+- 自建 DashScopeEmbeddings 类实现 LangChain 的 Embeddings 接口
+- 懒加载：启动时不加载任何模型，首次调用 RAG 时才构建/加载向量库
+- 自动版本检测：换了 Embedding 模型自动重建向量库
 """
 
 import os
@@ -28,15 +30,16 @@ CURRENT_VERSION = "v2"
 _vector_db = None
 
 
+# DP: 自定义 LangChain Embedding 包装类 — 调用阿里云原生 TextEmbedding API
 class DashScopeEmbeddings(Embeddings):
     """
     LangChain 兼容的 DashScope Embedding 包装类。
-    调用阿里云原生 TextEmbedding API（text-embedding-v2），不走 OpenAI 兼容接口。
+    调用阿里云原生 TextEmbedding API（text-embedding-v2），
+    模型小、速度快、免下载，复用已有 API Key。
     """
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """批量把文档转成向量（构建/更新知识库时用）"""
-        # DashScope API 接受字符串列表，自动批处理
         resp = TextEmbedding.call(
             model="text-embedding-v2",
             input=texts,
@@ -44,7 +47,6 @@ class DashScopeEmbeddings(Embeddings):
         )
         if resp.status_code != 200:
             raise RuntimeError(f"Embedding API 调用失败: {resp.message}")
-        # 按输入顺序返回向量
         return [item["embedding"] for item in resp.output["embeddings"]]
 
     def embed_query(self, text: str) -> List[float]:
@@ -60,7 +62,7 @@ class DashScopeEmbeddings(Embeddings):
 
 
 def _get_vector_db():
-    """懒加载向量数据库"""
+    """DP: 懒加载向量数据库 — 首次调用才初始化，启动不等待"""
     global _vector_db
 
     if _vector_db is not None:
@@ -68,7 +70,7 @@ def _get_vector_db():
 
     embeddings = DashScopeEmbeddings()
 
-    # 检查是否需要重建（换模型 / 数据库不存在）
+    # DP: 版本检测 — 换了 Embedding 模型或数据库损坏时自动重建
     need_rebuild = not (os.path.exists(PERSIST_DIRECTORY) and os.path.exists(VERSION_FILE))
     if not need_rebuild:
         with open(VERSION_FILE, "r") as f:

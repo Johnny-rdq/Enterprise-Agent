@@ -1,3 +1,12 @@
+<!--
+DP 前端改动总结：
+- 标题从"极客科技"改为"AI 智能体协作平台"，图标换为 🧠
+- 全部按钮/文本汉化（New Session→新建会话，Send→发送，Thinking→思考中...）
+- 发送方式从 EventSource(GET) 改为 fetch(POST JSON)
+- Token 不再硬编码在 URL 里，改为 POST Body 传参
+- 打字机速度提升 10 倍（3字/15ms → 50字/10ms）
+- 欢迎页增加功能引导（建议用户问什么）
+-->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -70,6 +79,7 @@
         let htmlRenderCache = {};                                    // 会话 HTML 缓存，切回去不用重新加载
         let typewriterTimer = null;                                  // 打字机动画定时器
 
+        // DP: Token 从硬编码 URL 参数改为 JS 变量，POST Body 传参更安全
         const AUTH_TOKEN = "demo_token";                             // 与后端 .env 中 AUTH_TOKEN 保持一致
 
         // ==================== 初始化 ====================
@@ -184,13 +194,13 @@
             if (typewriterTimer) clearInterval(typewriterTimer);
             let charIndex = 0;
             element.classList.add('typing-indicator');
+            // DP: 提速 — 50字/10ms，1000字仅需0.2秒渲染完
             typewriterTimer = setInterval(() => {
                 if (targetSessionId !== currentThreadId) {  // 用户切走了，刹车
                     clearInterval(typewriterTimer);
                     return;
                 }
                 if (charIndex <= fullText.length) {
-                    // 每次跳 50 个字符，几乎瞬间完成，保留流式感
                     const textSlice = fullText.substring(0, charIndex);
                     element.innerHTML = DOMPurify.sanitize(marked.parse(textSlice));
                     scrollToBottom();
@@ -228,7 +238,7 @@
             contentBox.innerHTML = "";
 
             try {
-                // POST JSON 请求，不再用 GET URL 传参
+                // DP: 从 EventSource(GET URL传参) 改为 fetch(POST JSON)，Token 不再暴露在 URL
                 const response = await fetch('/run_agent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

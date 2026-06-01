@@ -6,6 +6,8 @@
 职责：分析用户任务，判断是简单问答还是复杂工程任务。
 - 简单任务 → 返回 "SIMPLE_QUERY: 无需编码"
 - 复杂任务 → 输出分步执行计划，交给 Researcher 去调研
+
+DP 改动：提示词从英文改为中文，判断逻辑更精准
 """
 
 from langchain_openai import ChatOpenAI
@@ -15,7 +17,7 @@ llm = ChatOpenAI(
     api_key=settings.API_KEY,
     base_url=settings.BASE_URL,
     model=settings.MODEL_NAME,
-    temperature=0.7     # 较高温度，让规划更有创意
+    temperature=0.7
 )
 
 
@@ -28,6 +30,7 @@ def plan_node(state: dict):
     task = state.get("task", "")
     history_info = state.get("research_info", "")
 
+    # DP: 提示词全部中文，分类更清晰
     prompt = f"""
 你是一个资深的 AI 项目经理。
 
@@ -38,7 +41,7 @@ def plan_node(state: dict):
 {task}
 
 执行规则：
-1. 如果任务只是简单的【问答、查资料、闲聊】（比如"迟到怎么罚"、"今天有什么新闻"），
+1. 如果任务只是简单的【问答、查资料、闲聊】（比如"迟到怎么罚"、"今天有什么新闻"、"画个爱心"），
    请直接输出："SIMPLE_QUERY: 无需编码"
 2. 如果任务需要【编写代码、开发程序】（比如"写一个贪吃蛇"、"帮我写个爬虫"），
    请输出简洁的分步执行计划。

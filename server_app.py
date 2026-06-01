@@ -8,6 +8,12 @@
 2. 接收用户请求，调用 LangGraph 工作流，SSE 流式返回结果（POST /run_agent）
 3. 持久化聊天历史到 SQLite（GET /get_chat_history）
 
+DP 改动：
+- /run_agent 从 GET 改为 POST JSON（更安全，不限长度）
+- 鉴权 Token 从硬编码改为环境变量 AUTH_TOKEN
+- recursion_limit 从 10 提升到 25（防止复杂任务被截断）
+- 去掉了启动时的 debug print
+
 启动方式：
     uvicorn server_app:app --host 0.0.0.0 --port 7860
 """
@@ -50,11 +56,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 鉴权令牌：从环境变量读取，默认 "demo_token"
+# DP: 鉴权令牌从环境变量读取，不再硬编码在代码里
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "demo_token")
 
 
 # ==================== 请求模型 ====================
+# DP: 新增 Pydantic 模型 — 原来是 GET + Query 参数，现在 POST + JSON Body
 
 class AgentRequest(BaseModel):
     """POST /run_agent 的 JSON 请求体"""
@@ -72,6 +79,7 @@ async def serve_frontend():
 
 
 # ==================== 路由 2：运行 Agent（核心接口） ====================
+# DP: 从 @app.get 改为 @app.post，用 JSON Body 传参
 
 @app.post("/run_agent")
 async def run_agent(req: AgentRequest):
@@ -98,7 +106,8 @@ async def run_agent(req: AgentRequest):
         """
         inputs = {"task": current_task}
         config = {
-            "recursion_limit": 25,                            # 最多 25 步，防止无限循环
+            # DP: recursion_limit 从 10 提升到 25，给复杂任务（含重试）足够的步数
+            "recursion_limit": 25,
             "configurable": {"thread_id": current_thread_id}  # LangGraph 内置的会话记忆
         }
 
@@ -113,7 +122,7 @@ async def run_agent(req: AgentRequest):
                 if isinstance(node_data, dict) and "research_info" in node_data:
                     final_answer = node_data["research_info"]
 
-            # 按 SSE 格式输出
+            # 按 SSE 格式输出（DP: ensure_ascii=False 保证中文不乱码）
             yield f"data: {json.dumps(step, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0.1)
 

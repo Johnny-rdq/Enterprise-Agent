@@ -1,6 +1,11 @@
 # ==========================================
 # 导入区：所有工具共享的公共依赖
 # ==========================================
+# DP 改动：
+# - headless=False + slow_mo=100（可见模式，方便演示）
+# - B站 UP主提取修复：中文逗号bug + 多策略兜底选择器
+# - 完整搜索结果不再截断
+# ==========================================
 from playwright.sync_api import sync_playwright
 import time
 from langchain_core.tools import tool
@@ -212,7 +217,7 @@ def _run_bilibili_rpa_in_thread(keyword: str, result_container: list):
                             if h3.count() > 0:
                                 title = h3.first.text_content()
 
-                        # --- 挖 UP 主/主播（多策略兜底）---
+                        # --- DP: 挖 UP 主（修了中文逗号bug + 多策略兜底）---
                         up_name = ""
                         # 策略1：精确选择器
                         for sel in [
