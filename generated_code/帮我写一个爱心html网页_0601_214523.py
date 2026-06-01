@@ -1,4 +1,7 @@
-<!DOCTYPE html>
+import os
+
+def generate_love_html():
+    html_content = '''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -121,4 +124,14 @@
         }
     </script>
 </body>
-</html>
+</html>'''
+    return html_content
+
+def main():
+    filename = "love_heart.html"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(generate_love_html())
+    print(f"✅ 已生成：{os.path.abspath(filename)}")
+
+if __name__ == "__main__":
+    main()

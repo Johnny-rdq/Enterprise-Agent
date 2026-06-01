@@ -17,4 +17,5 @@ data/
 temp_execution.py
 
 # 6. AI 生成的代码输出
-generated_code/
+generated_code/*.html
+!frontend/index.html
