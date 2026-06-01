@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  base: './',  // 使用相对路径，避免静态资源 404
   server: {
     port: 5173,
     // 代理 API 请求到 FastAPI 后端

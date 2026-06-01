@@ -18,6 +18,18 @@ DP 改动：
     uvicorn server_app:app --host 0.0.0.0 --port 7860
 """
 
+import sys
+import io
+
+# Fix UnicodeEncodeError on Windows: GBK terminal can't encode emoji (📍🧠✅ etc.)
+# Force stdout/stderr to UTF-8 so print() with emoji doesn't crash the agent pipeline.
+if sys.platform == 'win32':
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    except (AttributeError, OSError):
+        pass
+
 import json
 import asyncio
 import sqlite3
@@ -25,6 +37,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from graph.workflow import app_graph   # 👈 导入编译好的 LangGraph 工作流
@@ -162,3 +175,11 @@ async def get_chat_history(thread_id: str):
         rows = cursor.fetchall()
 
     return {"history": [{"role": r, "content": c} for r, c in rows]}
+
+
+# ==================== 静态资源 ====================
+# 挂载 React 构建产物的 /assets 目录（JS、CSS、图片等）
+# 必须在所有路由之后 mount，否则会拦截 API 请求
+DIST_ASSETS = "frontend/dist/assets"
+if os.path.exists(DIST_ASSETS):
+    app.mount("/assets", StaticFiles(directory=DIST_ASSETS), name="assets")
