@@ -194,7 +194,8 @@ DP 前端改动总结：
             if (typewriterTimer) clearInterval(typewriterTimer);
             let charIndex = 0;
             element.classList.add('typing-indicator');
-            // DP: 提速 — 50字/10ms，1000字仅需0.2秒渲染完
+            // DP: 流式速度平衡 — 首帧立即显示100字，之后每30ms追加6字（约200字/秒，既快又可见）
+            let firstFrame = true;
             typewriterTimer = setInterval(() => {
                 if (targetSessionId !== currentThreadId) {  // 用户切走了，刹车
                     clearInterval(typewriterTimer);
@@ -204,13 +205,18 @@ DP 前端改动总结：
                     const textSlice = fullText.substring(0, charIndex);
                     element.innerHTML = DOMPurify.sanitize(marked.parse(textSlice));
                     scrollToBottom();
-                    charIndex += 50;
+                    if (firstFrame) {
+                        charIndex += 100;   // 首帧跳100字，立刻有内容
+                        firstFrame = false;
+                    } else {
+                        charIndex += 6;     // 之后每次6字，保持流式感
+                    }
                 } else {
                     clearInterval(typewriterTimer);
                     element.classList.remove('typing-indicator');
                     htmlRenderCache[currentThreadId] = chatContainer.innerHTML;
                 }
-            }, 10);
+            }, 30);
         }
 
         /**

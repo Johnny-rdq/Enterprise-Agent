@@ -13,6 +13,7 @@ DP 改动：
 
 import os
 import shutil
+import time
 from typing import List
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -114,9 +115,12 @@ def search_knowledge_base(query: str) -> str:
     """
     在本地知识库中搜索。首次调用构建向量库（API 调用），后续秒回。
     """
+    t0 = time.time()
     print(f"   -> [RAG Search] 搜索: {query}")
     db = _get_vector_db()
+    t1 = time.time()
     docs = db.similarity_search(query, k=3)
+    print(f"   -> [RAG Search] ⏱️  向量检索耗时: {time.time()-t1:.1f}秒（DB加载: {t1-t0:.1f}秒）")
 
     if not docs:
         return "本地知识库中未找到相关机密信息。"

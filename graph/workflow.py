@@ -31,6 +31,7 @@
 import os
 import re
 import subprocess
+import time
 from datetime import datetime
 from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, END
@@ -104,13 +105,14 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
         ("user", "{input}")
     ])
 
+    t0 = time.time()
     chain = prompt | llm
     response = chain.invoke({"input": task})
     decision = response.content.strip().lower()
 
     print(f"\n{'='*60}")
     print(f"[Router] 📍 用户输入: {task[:80]}...")
-    print(f"[Router] 🧠 LLM 路由判断: {decision}")
+    print(f"[Router] 🧠 LLM 路由判断: {decision}（耗时 {time.time()-t0:.1f}秒）")
 
     if "planner" in decision:
         print(f"[Router] ➡️  进入多Agent管线（规划→调研→编码→审查）")
@@ -130,15 +132,18 @@ def chat_rag_node(state: AgentState) -> dict:
     2. RAG 没命中 → 联网搜索（DuckDuckGo）
     3. 网络也没结果 → LLM 凭自身知识直接回答
     """
+    t_start = time.time()
     task = state["task"]
     print(f"\n[ChatRAG] 📍 收到问题: {task[:80]}...")
     print(f"[ChatRAG] 🔍 第一步：查本地知识库...")
+    t0 = time.time()
     rag_result = search_knowledge_base(task)
-    print(f"[ChatRAG] RAG检索结果: {'命中' if '未找到' not in rag_result else '未命中'}（{len(rag_result)}字符）")
+    print(f"[ChatRAG] RAG检索完成（耗时 {time.time()-t0:.1f}秒）: {'命中' if '未找到' not in rag_result else '未命中'}（{len(rag_result)}字符）")
 
     if "未找到" not in rag_result and "no relevant" not in rag_result.lower():
         # RAG 命中 → 基于文档回答
-        print(f"[ChatRAG] ✅ RAG命中，基于内部文档生成回答...")
+        print(f"[ChatRAG] ✅ RAG命中，LLM生成回答...")
+        t_llm = time.time()
         prompt = ChatPromptTemplate.from_messages([
             ("system", "你是极客科技的企业 AI 助手。请根据检索到的内部文档回答用户问题。"
                        "使用 Markdown 格式排版，加粗关键词，用列表组织内容。"),
@@ -174,6 +179,7 @@ def chat_rag_node(state: AgentState) -> dict:
             chain = prompt | llm
             response = chain.invoke({"input": task})
 
+    print(f"[ChatRAG] ⏱️  总耗时: {time.time()-t_start:.1f}秒")
     return {"research_info": response.content}
 
 
