@@ -6,24 +6,26 @@
 这是整个项目的「大脑」，负责：
 1. 路由判断：是简单问答还是复杂任务？
 2. 简单路径：先查 RAG 文档库 → 没命中就联网搜 → 再不行 LLM 裸答
-3. 复杂路径：启动四 Agent 协作管线（规划→调研→编码→执行→审查）
+3. 复杂路径：启动 Agent 管线，但查资料类问题会跳过编码环节
 
 管线流程：
-    Router（路由裁判）
+    Router（路由判断）
        │
        ├─ 简单/闲聊 → Chat/RAG Node → END
        │
-       └─ 复杂任务 → Planner（规划）
-                        ↓
-                     Researcher（调研，调用百度/B站/DuckDuckGo/内部文档）
-                        ↓
-                     Coder（编码）
-                        ↓
-                     Executor（执行）→ 代码跑通了吗？
-                        ↓
-                     Reviewer（审查）
-                        ├─ PASS → END ✅
-                        └─ FAIL → 打回 Coder 重写（最多 2 次）
+       └─ 需要搜索/写代码 → Planner（规划）
+                                ↓
+                             Researcher（百度/B站/DuckDuckGo/内部文档）
+                                │
+                                ├─ 无需编码？→ END ✅
+                                │
+                                └─ 需要编码？→ Coder（编码）
+                                                  ↓
+                                               Executor（执行）
+                                                  ↓
+                                               Reviewer（审查）
+                                                  ├─ PASS → END ✅
+                                                  └─ FAIL → 打回重写（最多2次）
 """
 
 import os
@@ -215,6 +217,23 @@ def review_decision(state: AgentState) -> Literal["code_node", "__end__"]:
     return "code_node"
 
 
+# ==================== ⑤ 调研后置判断：需要写代码吗？ ====================
+
+def need_code_decision(state: AgentState) -> Literal["code_node", "__end__"]:
+    """
+    Researcher 调研完毕后，看看 Planner 的计划是否要求写代码：
+    - 计划说"无需编码" → 直接结束，跳过 Coder/Execute/Reviewer
+    - 计划说要写代码 → 进入编码管线
+    """
+    plan = state.get("plan", "")
+    if "无需编码" in plan or "SIMPLE_QUERY" in plan:
+        print("[Decision] ✅ 计划明确不需要编码，直接结束（跳过编码管线）")
+        return "__end__"
+    else:
+        print("[Decision] 📝 计划要求编写代码，进入编码管线")
+        return "code_node"
+
+
 # ==================== 🏗️ 组装工作流图 ====================
 
 workflow = StateGraph(AgentState)
@@ -241,7 +260,17 @@ workflow.add_edge("chat_rag_node", END)
 
 # 复杂路径：规划 → 调研 → 编码 → 执行 → 审查
 workflow.add_edge("plan_node", "research_node")
-workflow.add_edge("research_node", "code_node")
+
+# 调研后判断：需要写代码吗？不需要就直接结束
+workflow.add_conditional_edges(
+    "research_node",
+    need_code_decision,
+    {
+        "code_node": "code_node",    # 需要写代码 → 进入编码管线
+        "__end__": END               # 不需要 → 直接结束
+    }
+)
+
 workflow.add_edge("code_node", "execute_node")
 workflow.add_edge("execute_node", "review_node")
 
