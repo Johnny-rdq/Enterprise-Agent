@@ -1,3 +1,14 @@
+---
+title: Nexus AI
+emoji: 🤖
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
+# 下面是你原本写在 README 里的项目介绍（如果有的话，保留在下面）
+
 # 🧠 AI 智能体协作平台
 
 基于 **LangGraph + FastAPI** 的多智能体协作系统，四位 AI Agent 接力完成从规划到编码的全流程任务。

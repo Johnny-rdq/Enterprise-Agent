@@ -69,7 +69,7 @@ class AgentState(TypedDict, total=False):
 llm = ChatOpenAI(
     api_key=settings.API_KEY,       # 从 .env 读取
     base_url=settings.BASE_URL,     # DashScope 兼容端点
-    model=settings.MODEL_NAME,      # 默认 qwen-plus
+    model=settings.MODEL_NAME,      # 默认 qwen-turbo
     temperature=0.7
 )
 
