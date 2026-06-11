@@ -13,11 +13,13 @@ DP 改动：提示词从英文改为中文，判断逻辑更精准
 from langchain_openai import ChatOpenAI
 from core.config import settings
 
+import os
+
 llm = ChatOpenAI(
-    api_key=settings.API_KEY,
-    base_url=settings.BASE_URL,
-    model=settings.MODEL_NAME,
-    temperature=0.7
+    model="qwen-turbo",
+    api_key=os.environ.get("DASHSCOPE_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    temperature=0.7  # 如果你原来有 temperature 等参数，可以保留
 )
 
 
