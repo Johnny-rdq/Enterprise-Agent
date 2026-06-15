@@ -61,7 +61,7 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
         print("[Router] >> 纯问候 -> 对话通道")
         return "chat_rag"
 
-    # 搜索/信息类关键词 → chat_rag（有 DuckDuckGo 搜索，不需要编码管线）
+    # 搜索/信息类关键词 → chat_rag（纯 LLM 对话，不需要编码管线）
     _search_kw = ["搜索", "搜一下", "查一下", "查查", "帮我查", "帮我搜", "找一下",
                   "开始了吗", "最新", "新闻", "今天", "现在", "最近", "实时", "刚刚", "当前",
                   "什么时候", "在哪里", "开始了没", "结束了吗", "世界杯", "奥运会", "比赛"]
@@ -77,7 +77,7 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
 - 纯闲聊、问候、知识问答（"什么是AI"）
 - 翻译、总结、建议咨询
 - 纯文字创作：写诗、写信、写文章
-- 搜索实时信息、新闻、最新动态（chat_rag 有 DuckDuckGo 搜索能力）
+- 搜索实时信息、新闻、最新动态
 - 用户只想了解/查询/搜索信息，不需要生成代码
 
 返回 planner（多Agent编码管线）：
