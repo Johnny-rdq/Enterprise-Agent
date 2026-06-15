@@ -1,6 +1,17 @@
 # AI 智能体协作平台
 
-基于 **LangGraph + FastAPI** 的多智能体协作系统，四位 AI Agent 接力完成从规划到编码的全流程任务。
+基于 **LangGraph + FastAPI** 的多智能体协作系统，四位 AI Agent 接力完成从需求分析到代码生成的全流程任务。前端采用 React + Tailwind CSS，支持 SSE 流式对话、多会话管理、Markdown 渲染。
+
+## 核心特性
+
+- **智能路由** — 关键词 + LLM 双层判断，自动分流：编码任务进入多 Agent 管线，闲聊/问答走快速对话通道
+- **四 Agent 协作管线** — 规划者 → 研究员 → 编码者 → 审核者，接力完成复杂编码任务
+- **安全沙箱执行** — Python 代码隔离运行，缺失包自动安装，GUI 程序（turtle/pygame/tkinter）非阻塞启动
+- **自动保存 & 打开** — 生成的代码按语言自动选择扩展名（.py/.html/.js/.css），保存后自动用默认程序打开
+- **重试机制** — 审核不通过自动打回编码者修改，最多重试 2 次
+- **SSE 流式传输** — 实时推送节点状态（思考中/编码中/执行中）和 LLM 生成的 token
+- **多会话管理** — 基于 thread_id 的会话隔离，聊天历史持久化到 SQLite
+- **Docker 部署** — 一键构建镜像，开箱即用
 
 ## 架构说明
 
@@ -8,53 +19,66 @@
 用户请求
     │
     ▼
-┌─────────────┐    简单问题   ┌──────────────┐
-│  路由判断    │──────────────│  聊天对话      │────── 结束
-│  (Router)   │              └──────────────┘
-└─────────────┘
+┌─────────────┐    闲聊/问答   ┌──────────────┐
+│  路由判断    │──────────────▶│  对话通道      │────── 结束
+│  (Router)   │               │ (chat_rag)    │
+└─────────────┘               └──────────────┘
     │ 编码任务
     ▼
 ┌─────────────┐     ┌────────────────┐     ┌─────────────┐
 │  规划者      │────▶│  研究员        │────▶│  编码者      │
-│  (PM)       │     │  (Analyst)     │     │  (Engineer) │
+│  (Planner)  │     │  (Researcher)  │     │  (Coder)    │
 └─────────────┘     └────────────────┘     └─────────────┘
-                                                    │
-                                                    ▼
-                                             ┌─────────────┐
-                                             │  执行器      │
-                                             │  (沙箱)     │
-                                             └─────────────┘
-                                                    │
-                                                    ▼
-                    ┌─────────────┐     ┌─────────────┐
-                    │   保存代码    │◀────│  审核者      │
-                    └─────────────┘ 通过 └─────────────┘
-                           ▲                    │
-                           │    不通过（重试）    │
-                           └────────────────────┘
+                                                   │
+                                                   ▼
+                                            ┌─────────────┐
+                                            │  执行器      │
+                                            │  (沙箱)     │
+                                            └─────────────┘
+                                                   │
+                                                   ▼
+                   ┌─────────────┐     ┌─────────────┐
+                   │   保存代码    │◀────│  审核者      │
+                   │ (SaveCode)  │ 通过 │ (Reviewer)  │
+                   └─────────────┘     └─────────────┘
+                          ▲                    │
+                          │    不通过（重试）    │
+                          └────────────────────┘
 ```
 
 ## Agent 角色说明
 
 | Agent | 角色 | 职责 |
 |-------|------|------|
-| **Planner（规划者）** | 项目经理 | 分析任务，制定分步执行计划 |
-| **Researcher（研究员）** | 情报整理员 | 将计划精简为 Coder 可直接使用的要点 |
-| **Coder（编码者）** | 软件工程师 | 生成可运行的 Python 或前端代码 |
-| **Reviewer（审核者）** | QA 工程师 | 验证执行结果，批准通过或打回修改 |
+| **Router（路由器）** | 流量分发 | 关键词 + LLM 双层判断，编码任务入管线，闲聊走对话通道 |
+| **Planner（规划者）** | 项目经理 | 分析任务需求，拆解为 3-5 步执行计划 |
+| **Researcher（研究员）** | 情报整理 | 将计划精简为编码者可直接使用的技术要点 |
+| **Coder（编码者）** | 软件工程师 | 自动识别目标语言（Python/HTML/CSS/JS），生成完整可运行代码 |
+| **Executor（执行器）** | 沙箱 | 隔离执行 Python 代码，自动补装缺失包，GUI 程序非阻塞启动 |
+| **Reviewer（审核者）** | QA 工程师 | 检查执行结果，PASS 则保存，失败则分析根因打回重试 |
+| **SaveCode（保存器）** | 归档 | 自动识别语言选扩展名，落盘到 `completed_code/` 并打开 |
 
 ## 技术栈
 
-- **后端**：FastAPI + LangGraph + LangChain
-- **大模型**：Qwen 系列（通过 DashScope 的 OpenAI 兼容 API）
-- **工具集**：Python 沙箱执行（GUI 程序非阻塞启动，缺失包自动安装）
-- **前端**：React + Vite + Tailwind CSS + Markdown 渲染 + SSE 流式传输
+| 层级 | 技术 |
+|------|------|
+| **后端框架** | FastAPI + Uvicorn |
+| **工作流引擎** | LangGraph（StateGraph） |
+| **LLM 调用** | LangChain + OpenAI 兼容接口 |
+| **大模型** | Qwen 系列（通过 DashScope API） |
+| **前端框架** | React 18 + Vite 6 |
+| **样式** | Tailwind CSS（暗色主题） |
+| **Markdown** | marked + DOMPurify |
+| **数据持久化** | SQLite（聊天历史） |
+| **流式传输** | SSE（Server-Sent Events） |
+| **代码执行** | subprocess 沙箱 + 自动补包 + GUI 非阻塞 |
 
 ## 快速开始
 
 ### 环境要求
 
 - Python 3.11+
+- Node.js 18+（仅前端开发时需要）
 - [DashScope API Key](https://dashscope.console.aliyun.com/)
 
 ### 安装步骤
@@ -94,20 +118,34 @@ docker run -p 7860:7860 --env-file .env enterprise-agent
 ## 项目结构
 
 ```
-├── agents/              # 四个 AI Agent（规划者、研究员、编码者、审核者）
-│   ├── planner_agent.py
-│   ├── researcher_agent.py
-│   ├── coder_agent.py
-│   └── reviewer_agent.py
-├── graph/               # LangGraph 工作流编排
-│   └── workflow.py
-├── tools/               # 工具集
-│   └── execute_tool.py  # 代码安全执行（沙箱 + 自动补包 + GUI 支持）
-├── core/                # 配置模块
-│   └── config.py
-├── frontend/            # React 前端界面
-│   └── src/
-├── server_app.py        # FastAPI 应用入口
+├── agents/                  # AI Agent 模块
+│   ├── planner_agent.py     #   规划者 — 拆解任务计划
+│   ├── researcher_agent.py  #   研究员 — 精简上下文
+│   ├── coder_agent.py       #   编码者 — 生成代码
+│   └── reviewer_agent.py    #   审核者 — 审查执行结果
+├── graph/                   # LangGraph 工作流编排
+│   └── workflow.py          #   状态图定义 + Router + 执行/保存节点
+├── tools/                   # 工具集
+│   └── execute_tool.py      #   安全沙箱执行 + 自动补包 + GUI 支持
+├── core/                    # 配置模块
+│   └── config.py            #   环境变量读取
+├── frontend/                # React 前端
+│   ├── src/
+│   │   ├── App.jsx          #   根组件 — SSE 流式接收
+│   │   ├── components/
+│   │   │   ├── ChatArea.jsx     # 聊天主区域
+│   │   │   ├── ChatMessage.jsx  # 消息气泡（Markdown 渲染）
+│   │   │   ├── MessageInput.jsx # 输入框 + 停止按钮
+│   │   │   └── Sidebar.jsx      # 侧边栏 — 会话列表
+│   │   ├── hooks/
+│   │   │   └── useSessions.js   # 会话状态管理
+│   │   ├── index.css        #   Tailwind + 全局样式
+│   │   └── main.jsx         #   入口
+│   └── dist/                #   预构建产物
+├── data/                    # 运行时数据（SQLite）
+├── completed_code/          # AI 生成的代码存档
+├── server_app.py            # FastAPI 应用入口 + SSE 端点
+├── temp_execution.py        # 临时执行脚本
 ├── Dockerfile
 ├── requirements.txt
 └── .env.example
@@ -119,8 +157,35 @@ docker run -p 7860:7860 --env-file .env enterprise-agent
 |--------|------|--------|
 | `API_KEY` | DashScope API 密钥 | — |
 | `BASE_URL` | API 接口地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `MODEL_NAME` | 大模型名称 | `qwen-turbo` |
-| `AUTH_TOKEN` | 前端认证令牌 | `demo_token` |
+| `MODEL_NAME` | 大模型名称 | `qwen-max` |
+| `AUTH_TOKEN` | 前端访问令牌 | `demo_token` |
+
+## API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/` | 前端页面 |
+| `POST` | `/agentrun` | 提交任务，SSE 流式返回结果 |
+| `GET` | `/get_chat_history` | 按 thread_id 查询历史消息 |
+
+### POST /agentrun 请求体
+
+```json
+{
+  "task": "用 Python 写一个冒泡排序",
+  "token": "demo_token",
+  "thread_id": "session_001"
+}
+```
+
+### SSE 事件类型
+
+| type | 说明 |
+|------|------|
+| `intent` | 路由结果提示（进入编码管线） |
+| `thinking` | 当前节点状态（正在分析/搜索/编码/检查） |
+| `token` | LLM 流式生成的文本 |
+| `result` | 执行结果或保存确认 |
 
 ## 开源协议
 
