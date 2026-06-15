@@ -1,209 +1,39 @@
 """
 ================================================================================
-🧠 Researcher Agent — AI 情报分析师
-================================================================================
+Researcher Agent — AI 情报分析师（简化版）
 
-职责：根据 Planner 的计划，使用各种工具搜集信息。
-拥有的工具（武器库）：
-- search_web()          → DuckDuckGo 全网搜索
-- search_internal_docs() → 本地 ChromaDB 知识库检索
-- search_baidu()        → Playwright 百度抓取（中文实时信息最强）
-- search_bilibili()     → Playwright B站抓取（视频/直播/游戏攻略）
-
-DP 改动：
-- 所有 LLM 提示词从英文改为中文，强制工具调用更有效
-- 新增代码任务 vs 搜索任务的分支逻辑（搜索任务强制调工具，代码任务不强制）
-- 简单查询跳过 LLM 总结，直接返回原始搜索结果（省 3~8 秒）
-- 新增兜底：LLM 不调工具时强制 DuckDuckGo 搜索
+职责：为 Coder 准备上下文资料。已砍联网搜索，直接用 LLM 整理计划。
 """
 
 from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
-from langchain_community.tools import DuckDuckGoSearchRun
-from tools.rag_tool import search_knowledge_base
 from core.config import settings
 
-# DP: browser_tool（含 Playwright）延迟导入，启动时不加载 ~2秒的 Playwright
-_search_baidu = None
-_search_bilibili = None
-
-def _get_baidu():
-    global _search_baidu
-    if _search_baidu is None:
-        from tools.browser_tool import search_baidu
-        _search_baidu = search_baidu
-    return _search_baidu
-
-def _get_bilibili():
-    global _search_bilibili
-    if _search_bilibili is None:
-        from tools.browser_tool import search_bilibili
-        _search_bilibili = search_bilibili
-    return _search_bilibili
-
-import os
-
 llm = ChatOpenAI(
-    model="qwen-turbo",
-    api_key=os.environ.get("DASHSCOPE_API_KEY"),
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    temperature=0.7  # 如果你原来有 temperature 等参数，可以保留
+    model=settings.MODEL_NAME,
+    api_key=settings.API_KEY,
+    base_url=settings.BASE_URL,
+    temperature=0.7,
+    streaming=True
 )
 
 
-# ==================== 工具定义 ====================
-
-@tool
-def search_web(query: str) -> str:
-    """搜索互联网公开信息、实时新闻等（基于 DuckDuckGo，适合英文/通用搜索）"""
-    search = DuckDuckGoSearchRun()
-    return search.run(query)
-
-
-@tool
-def search_internal_docs(query: str) -> str:
-    """搜索极客科技内部机密文档（基于 ChromaDB 向量检索，公司规定/福利/密码等）"""
-    return search_knowledge_base(query)
-
-
-@tool
-def search_baidu_proxy(keyword: str) -> str:
-    """【百度搜索工具】搜索中文新闻、实时热点、国内动态时优先使用。"""
-    return _get_baidu().invoke({"keyword": keyword})
-
-
-@tool
-def search_bilibili_proxy(keyword: str) -> str:
-    """【B站搜索工具】搜索视频、直播、游戏攻略、UP主时使用。"""
-    return _get_bilibili().invoke({"keyword": keyword})
-
-
-# DP: 四个工具绑定（baidu/bilibili 用代理，首次调用才加载 Playwright）
-tools = [search_web, search_internal_docs, search_baidu_proxy, search_bilibili_proxy]
-llm_with_tools = llm.bind_tools(tools)
-
-
-# ==================== 调研节点 ====================
-
+# 调研节点 — 直接用 LLM 整理计划作为 Coder 的上下文
 def research_node(state: dict):
-    """
-    被 LangGraph 工作流调用的入口函数。
-    输入：state["task"]、state["plan"]
-    输出：{"research_info": "..."} → 调研报告，传给 Coder 或前端
-    """
     task = state.get("task", "")
     plan = state.get("plan", "")
-    history_info = state.get("research_info", "")
 
-    # DP: 先判断任务类型 — 搜索类（强制搜）vs 编码类（不强制搜）
-    is_simple = "无需编码" in plan or "SIMPLE_QUERY" in plan
+    print(f"[Researcher] 整理上下文资料...")
 
-    if is_simple:
-        # DP: 简单问答/搜索类 → 必须搜索，获取最新信息
-        prompt = f"""
-你是"极客科技"的专属 AI 情报分析师。
+    # 简单任务直接传计划
+    if len(task) < 100 and len(plan) < 500:
+        return {"research_info": f"任务：{task}\n计划：{plan}"}
 
-【用户需求】：
-{task}
+    # 复杂任务让 LLM 精简
+    prompt = f"""你是技术资料整理员。请将以下计划精简为 Coder 能直接使用的要点（3-5条）。
 
-🚨 工具选择规则（必须严格遵守）：
+任务：{task}
+计划：{plan}
 
-1. 中文新闻、实时热点、国内动态 → 调用 `search_baidu`
-2. 视频、直播、游戏攻略、UP主 → 调用 `search_bilibili`
-3. 公司内部规定、迟到惩罚、福利 → 调用 `search_internal_docs`
-4. 纯英文问题或以上工具都失败 → 用 `search_web` 兜底
-
-⚠️ 死命令：必须先搜再回答，严禁凭自己的知识直接回答！
-"""
-    else:
-        # DP: 编码任务 → 搜不搜让 LLM 自己判断，不强制
-        prompt = f"""
-你是"极客科技"的专属 AI 情报分析师。
-
-【项目计划】：
-{plan}
-
-【用户需求】：
-{task}
-
-根据计划判断是否需要搜索：
-- 如果计划中需要最新 API 文档、技术资料 → 调用相应工具搜索
-- 如果只是纯算法/逻辑代码（如"写个斐波那契函数"）→ 可以不搜，直接回答
-
-可用工具：search_baidu(中文)、search_bilibili(视频)、search_internal_docs(内部文档)、search_web(通用)
-"""
-
-    # 第一轮：让 LLM 决定用什么工具
-    print(f"\n{'='*60}")
-    print(f"[Researcher] 🧠 LLM 正在决定使用哪个搜索工具...")
-    print(f"[Researcher] 用户需求: {task[:100]}...")
-    msg = llm_with_tools.invoke(prompt)
-
-    if msg.tool_calls:
-        tool_name = msg.tool_calls[0]["name"]
-        args_dict = msg.tool_calls[0]["args"]
-        print(f"[Researcher] ✅ LLM 决定调用: {tool_name}")
-        print(f"[Researcher] 搜索关键词: {args_dict}")
-        print(f"[Researcher] ⏳ 正在执行搜索，请稍候...")
-
-        # 根据工具名称分发调用
-        if tool_name == "search_internal_docs":
-            tool_result = search_internal_docs.invoke(args_dict)
-        elif "baidu" in tool_name:
-            tool_result = search_baidu_proxy.invoke(args_dict)
-        elif "bilibili" in tool_name:
-            tool_result = search_bilibili_proxy.invoke(args_dict)
-        else:
-            tool_result = search_web.invoke(args_dict)
-
-        # DP: 完整打印搜索结果，不再截断
-        print(f"[Researcher] ✅ 搜索完成！")
-        print(f"[Researcher] 原始搜索结果（完整内容，共 {len(str(tool_result))} 字符）:")
-        print(f"{'─'*60}")
-        print(tool_result)
-        print(f"{'─'*60}")
-
-        # DP: 简单查询跳过 LLM 总结，直接返回原始结果（省 3~8 秒）
-        if is_simple:
-            print(f"[Researcher] ⚡ 简单查询，跳过LLM总结，直接返回搜索结果！")
-            return {"research_info": tool_result}
-        else:
-            # DP: 编码任务 — LLM 整理成结构化报告方便 Coder 理解
-            print(f"[Researcher] 📝 编码任务，LLM正在整理搜索结果...")
-            final_prompt = f"""
-你是极客科技的情报分析师。请根据以下搜索结果回答用户问题。
-
-搜索结果（你唯一的事实来源，严禁编造）：
-{tool_result}
-
-用户问题：{task}
-
-要求：
-1. 严格基于搜索结果回答，不要自己编造任何信息。
-2. 如果搜索结果不包含答案，请诚实地说"搜索结果中未找到相关信息"。
-3. 使用 Markdown 格式排版：用标题、加粗、列表让答案清晰易读。
-4. 尽量注明信息来源。
-"""
-            final_msg = llm.invoke(final_prompt)
-            return {"research_info": final_msg.content}
-
-    else:
-        # DP: LLM 没调工具 — 强制用 DuckDuckGo 搜一次兜底
-        print("      -> [Researcher] LLM未调用工具，强制 DuckDuckGo 兜底搜索...")
-        try:
-            fallback_result = search_web.invoke({"query": task})
-            final_prompt = f"""
-你是极客科技的情报分析师。
-
-强制搜索结果：
-{fallback_result}
-
-用户问题：{task}
-
-请基于上述搜索结果回答。使用 Markdown 格式。
-"""
-            final_msg = llm.invoke(final_prompt)
-            return {"research_info": final_msg.content}
-        except Exception as e:
-            print(f"      -> [Researcher] 兜底搜索也失败了: {e}")
-            return {"research_info": msg.content}
+只输出要点列表，不要废话。"""
+    msg = llm.invoke(prompt)
+    return {"research_info": msg.content}

@@ -1,13 +1,22 @@
-export default function Sidebar({ sessions, currentId, onSwitch, onCreate, onDelete }) {
+export default function Sidebar({ sessions, currentId, onSwitch, onCreate, onDelete, onToggle }) {
   return (
     <aside className="w-64 bg-gray-950 border-r border-gray-800 flex flex-col justify-between flex-shrink-0">
       <div className="p-3 flex flex-col gap-4 overflow-hidden h-full">
-        <button
-          onClick={onCreate}
-          className="w-full border border-gray-700 hover:border-blue-500 hover:bg-gray-900 text-sm font-medium py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
-        >
-          <span>+</span> 新建会话
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onCreate}
+            className="flex-1 border border-gray-700 hover:border-blue-500 hover:bg-gray-900 text-sm font-medium py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+          >
+            <span>+</span> 新建会话
+          </button>
+          <button
+            onClick={onToggle}
+            className="w-9 h-9 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-500 hover:text-gray-300 transition-all active:scale-90 flex-shrink-0"
+            title="收起侧边栏"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto flex flex-col gap-1 pr-1">
           {sessions.map(s => {
             const isActive = s.id === currentId;

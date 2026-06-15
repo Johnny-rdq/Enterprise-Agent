@@ -1,4 +1,3 @@
-import { useState, useEffect, useRef } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
@@ -7,42 +6,20 @@ function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text));
 }
 
-// DP: 流式打字机效果 — 首帧3字，之后2字/50ms（有可见的逐字输出感）
-function useTypewriter(text, isStreaming) {
-  const [displayed, setDisplayed] = useState('');
-  const timerRef = useRef(null);
-  const firstFrame = useRef(true);
-
-  useEffect(() => {
-    if (!text) { setDisplayed(''); return; }
-    if (!isStreaming) { setDisplayed(text); return; }
-
-    let idx = displayed.length;
-    firstFrame.current = idx === 0;
-
-    timerRef.current = setInterval(() => {
-      if (idx >= text.length) {
-        clearInterval(timerRef.current);
-        return;
-      }
-      idx += firstFrame.current ? 3 : 2;     // 首帧3字，之后每帧2字
-      firstFrame.current = false;
-      if (idx > text.length) idx = text.length;
-      setDisplayed(text.substring(0, idx));
-    }, 50);                                     // 每50ms一帧
-
-    return () => clearInterval(timerRef.current);
-  }, [text, isStreaming]);
-
-  // 清理
-  useEffect(() => () => clearInterval(timerRef.current), []);
-
-  return displayed;
+function getLastStatusLine(text) {
+  if (!text) return '';
+  const lines = text.trim().split('\n');
+  return lines[lines.length - 1].replace(/^[#*\-\s]+/, '').trim().substring(0, 40);
 }
 
-export default function ChatMessage({ role, content, isStreaming, isError }) {
-  const displayed = useTypewriter(content, isStreaming);
+export default function ChatMessage({ role, intent, thinking, content, result, isStreaming, isError }) {
   const isUser = role === 'user';
+  const hasIntent = intent && intent.length > 0;
+  const hasContent = content && content.length > 0;
+  const hasResult = result && result.length > 0;
+  const isEmpty = !hasIntent && !hasContent && !hasResult;
+
+  const statusLine = getLastStatusLine(thinking);
 
   return (
     <div className={`flex gap-4 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -60,14 +37,55 @@ export default function ChatMessage({ role, content, isStreaming, isError }) {
       }`}>
         {isUser ? (
           content
+        ) : isStreaming && !hasContent && !hasResult ? (
+          <div className="flex items-center gap-2">
+            <svg className="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-gray-400 text-xs">{statusLine || '正在处理...'}</span>
+          </div>
+        ) : !isStreaming && isEmpty && !isError ? (
+          <span className="text-gray-400">思考中...</span>
         ) : (
-          <div
-            className={`markdown-body ${isStreaming && displayed !== content ? 'typing-cursor' : ''}`}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(displayed) }}
-          />
-        )}
-        {!isUser && isStreaming && !displayed && (
-          <span className="typing-cursor text-gray-400">思考中...</span>
+          <div className="space-y-3">
+            {hasIntent && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-900/50 border border-indigo-700/50 text-indigo-300 text-xs animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                {intent}
+              </div>
+            )}
+            {isStreaming && statusLine && (
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <svg className="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                {statusLine}
+              </div>
+            )}
+            {hasContent && (
+              isStreaming ? (
+                <div className="text-gray-200 whitespace-pre-wrap">{content}</div>
+              ) : (
+                <div
+                  className="markdown-body"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+                />
+              )
+            )}
+            {hasResult && (
+              <div className={`p-3 rounded-lg border whitespace-pre-wrap ${
+                isError
+                  ? 'bg-red-900/30 border-red-800 text-red-200'
+                  : result.includes('失败') || result.includes('错误') || result.includes('❌')
+                    ? 'bg-red-900/20 border-red-800/50 text-red-200'
+                    : 'bg-emerald-900/20 border-emerald-800 text-gray-200'
+              }`}>
+                {isStreaming ? result : <div className="markdown-body text-sm" dangerouslySetInnerHTML={{ __html: renderMarkdown(result) }} />}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -1,31 +1,8 @@
 """
 ================================================================================
-🧠 AI 智能体协作平台 — LangGraph 工作流核心
+[LLM] AI 智能体协作平台 — LangGraph 工作流核心
+   Router -> Planner -> Researcher -> Coder -> Executor -> Reviewer -> SaveCode
 ================================================================================
-
-这是整个项目的「大脑」，负责：
-1. 路由判断：是简单问答还是复杂任务？
-2. 简单路径：先查 RAG 文档库 → 没命中就联网搜 → 再不行 LLM 裸答
-3. 复杂路径：启动 Agent 管线，但查资料类问题会跳过编码环节
-
-管线流程：
-    Router（路由判断）
-       │
-       ├─ 简单/闲聊 → Chat/RAG Node → END
-       │
-       └─ 需要搜索/写代码 → Planner（规划）
-                                ↓
-                             Researcher（百度/B站/DuckDuckGo/内部文档）
-                                │
-                                ├─ 无需编码？→ END ✅
-                                │
-                                └─ 需要编码？→ Coder（编码）
-                                                  ↓
-                                               Executor（执行）
-                                                  ↓
-                                               Reviewer（审查）
-                                                  ├─ PASS → SaveCode（保存+自动打开）→ END ✅
-                                                  └─ FAIL → 打回重写（最多2次）
 """
 
 import os
@@ -39,67 +16,78 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
-from tools.rag_tool import search_knowledge_base
-# DP: 新增导入 — chat_rag_node 的联网搜索兜底，和代码保存功能
-from tools.search_tool import search_web
 from agents.planner_agent import plan_node
 from agents.researcher_agent import research_node
 from agents.coder_agent import code_node
 from agents.reviewer_agent import review_node
 from tools.execute_tool import run_code_safely
 
-
-# ==================== 共享状态定义 ====================
-# 所有 Agent 节点共享同一个 state 字典（类似黑板/白板）
-# total=False 表示每个字段都是可选的
-
 class AgentState(TypedDict, total=False):
-    task: str              # 用户原始输入
-    research_info: str     # AI 回复 / 调研结果（最终展示给用户的内容）
-    plan: str              # Planner 制定的执行计划
-    code: str              # Coder 生成的代码
-    execution_result: str  # Executor 的沙盒运行结果
-    feedback: str          # Reviewer 的审查意见
-    retry_count: int       # 当前重试次数（最多 2 次）
+    task: str
+    research_info: str
+    plan: str
+    code: str
+    execution_result: str
+    feedback: str
+    retry_count: int
 
-
-# ==================== LLM 实例 ====================
-# 使用阿里云 DashScope 的通义千问（qwen-plus），通过 OpenAI 兼容接口调用
+# LLM 实例 — streaming=True 确保流式输出
 llm = ChatOpenAI(
-    model=settings.MODEL_NAME,      # 从 .env 读取模型名
-    api_key=settings.API_KEY,       # 从 .env 读取 API Key
-    base_url=settings.BASE_URL,     # 从 .env 读取端点地址
-    temperature=0.7                 # 控制输出随机性
+    model=settings.MODEL_NAME,
+    api_key=settings.API_KEY,
+    base_url=settings.BASE_URL,
+    temperature=0.7,
+    streaming=True
 )
 
-# ==================== ① 路由裁判 ====================
-# DP: 重写提示词 — 原来几乎所有请求都走 planner，现在画图/写诗/闲聊走快速通道
 
+# 路由裁判 — 关键词 + LLM 双层判断，chat 走快速通道，planner 走编码管线
 def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
-    """
-    用大模型判断用户意图：
-    - "chat_rag" → 简单问答/闲聊/查文档/画图/写诗（走快速通道，不写代码）
-    - "planner" → 需要搜新闻/查资料/写代码（走 Agent 管线）
-    """
-    task = state["task"]
+    task = state["task"].strip()
 
-    # DP: 路由提示词全部改为中文，分类更精准，避免"写个爱心"也触发编码管线
+    # 编码关键词 → 最优先判断（避免被问候检测误拦截）
+    _code_kw = ["写代码", "编写", "写个", "写一个", "写一", "开发", "实现",
+                "python", "html", "javascript", "react", "vue", "css", "爬虫",
+                "网页", "游戏", "程序", "脚本", "api", "后端", "前端", "网站",
+                "帮我写", "帮我做", "生成", "创建一个"]
+    if any(kw in task.lower() for kw in _code_kw):
+        print("[Router] >> 编码关键词 -> 多Agent管线")
+        return "planner"
+
+    # 纯问候短句快速拦截
+    greeting_keywords = ["你好", "嗨", "hello", "hi", "哈哈", "谢谢", "再见", "拜拜", "早上好", "晚上好", "晚安"]
+    if (len(task) <= 6 or
+            (len(task) <= 15 and any(kw in task.lower() for kw in greeting_keywords))):
+        print("[Router] >> 纯问候 -> 对话通道")
+        return "chat_rag"
+
+    # 搜索/信息类关键词 → chat_rag（有 DuckDuckGo 搜索，不需要编码管线）
+    _search_kw = ["搜索", "搜一下", "查一下", "查查", "帮我查", "帮我搜", "找一下",
+                  "开始了吗", "最新", "新闻", "今天", "现在", "最近", "实时", "刚刚", "当前",
+                  "什么时候", "在哪里", "开始了没", "结束了吗", "世界杯", "奥运会", "比赛"]
+    if any(kw in task.lower() for kw in _search_kw):
+        print("[Router] >> 搜索/信息关键词 -> 对话+搜索通道")
+        return "chat_rag"
+
+    # LLM 路由兜底
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """你是一个精准的路由分类器。分析用户的输入，只返回一个词：
+        ("system", """你是一个精准的路由分类器。分析用户输入，只返回一个词：
 
-1. 以下情况返回 chat_rag（走快速通道，不写代码）：
-   - 闲聊、问候（"你好"、"哈哈"）
-   - 画图、写诗、写信、写文章（"画个爱心"、"写首情诗"）
-   - 公司内部规定问答（"迟到怎么罚？"）
-   - 普通知识问答、解释概念（"什么是AI？"）
-   - 简单数学、翻译、建议咨询
+返回 chat_rag（对话+搜索通道）：
+- 纯闲聊、问候、知识问答（"什么是AI"）
+- 翻译、总结、建议咨询
+- 纯文字创作：写诗、写信、写文章
+- 搜索实时信息、新闻、最新动态（chat_rag 有 DuckDuckGo 搜索能力）
+- 用户只想了解/查询/搜索信息，不需要生成代码
 
-2. 只有以下情况才返回 planner（走编码管线）：
-   - 明确要求"写代码"、"写个程序"、"开发"（"帮我写个爬虫"）
-   - 需要搜索实时新闻、最新消息（"今天有什么科技新闻"）
-   - 要求"创建项目"、"做个网站"、"写个游戏"
+返回 planner（多Agent编码管线）：
+- 要求写代码/编程/开发/实现某个程序
+- 提到编程语言（Python/HTML/JS/React等）
+- 要求创建项目、网站、游戏、爬虫
 
-只能返回一个词：chat_rag 或 planner。"""),
+关键：只有用户明确要求"写代码""开发""实现程序"才返回 planner。
+信息查询、搜索、问答一律返回 chat_rag。
+只能返回一个词。"""),
         ("user", "{input}")
     ])
 
@@ -108,165 +96,38 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
     response = chain.invoke({"input": task})
     decision = response.content.strip().lower()
 
-    print(f"\n{'='*60}")
-    print(f"[Router] 📍 用户输入: {task[:80]}...")
-    print(f"[Router] 🧠 LLM 路由判断: {decision}（耗时 {time.time()-t0:.1f}秒）")
+    print(f"[Router] [IN]  输入: {task[:60]}...")
+    print(f"[Router] [LLM] LLM路由: {decision}（{time.time()-t0:.1f}s）")
 
     if "planner" in decision:
-        print(f"[Router] ➡️  进入多Agent管线（规划→调研→编码→审查）")
+        print(f"[Router] -> 多Agent管线")
         return "planner"
     else:
-        print(f"[Router] ➡️  进入简单通道（RAG查文档 / 联网搜索 / 自由对话）")
+        print(f"[Router] -> 对话通道")
         return "chat_rag"
 
 
-# ==================== ② 简单问答节点 ====================
-# DP: 新增三层兜底 — RAG → 联网搜索 → LLM 裸答，原来只有 RAG → LLM
-
-def chat_rag_node(state: AgentState) -> dict:
-    """
-    处理不需要写代码的简单请求（四层智能分流）：
-    0. 纯闲聊/问候 → 跳过所有搜索，直接 LLM 聊天
-    1. 公司相关？→ 查 RAG 文档库
-    2. RAG 没命中 → 联网搜索（DuckDuckGo）
-    3. 网络也没结果 → LLM 凭自身知识回答
-    """
-    t_start = time.time()
+# 对话节点 — 纯 LLM 对话
+async def chat_rag_node(state: AgentState, config: dict = None) -> dict:
     task = state["task"]
+    print(f"[Chat] {task[:60]}...")
 
-    # DP: 闲聊快速通道 — 问候/寒暄不触发任何搜索，直接聊天
-    _chat_patterns = ["你好", "嗨", "哈哈", "谢谢", "再见", "拜拜", "早上好", "晚上好",
-                      "hello", "hi", "hey", "thanks", "bye", "你是谁", "你叫什么"]
-    is_pure_chat = any(p in task.lower() for p in _chat_patterns) and len(task) < 20
-
-    if is_pure_chat:
-        print(f"[ChatRAG] 💬 纯闲聊，跳过所有搜索，直接 LLM 聊天...")
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "你是一个友好幽默的 AI 助手，请用中文简短回复用户的问候。"),
-            ("user", "{input}")
-        ])
-        chain = prompt | llm
-        response = chain.invoke({"input": task})
-        print(f"[ChatRAG] ⏱️  总耗时: {time.time()-t_start:.1f}秒（闲聊模式）")
-        return {"research_info": response.content}
-
-    print(f"\n[ChatRAG] 📍 收到问题: {task[:80]}...")
-    print(f"[ChatRAG] 🔍 第一步：查本地知识库...")
-    t0 = time.time()
-    rag_result = search_knowledge_base(task)
-    print(f"[ChatRAG] RAG检索完成（耗时 {time.time()-t0:.1f}秒）: {'命中' if '未找到' not in rag_result else '未命中'}（{len(rag_result)}字符）")
-
-    if "未找到" not in rag_result and "no relevant" not in rag_result.lower():
-        # RAG 命中 → 基于文档回答
-        print(f"[ChatRAG] ✅ RAG命中，LLM生成回答...")
-        t_llm = time.time()
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "你是极客科技的企业 AI 助手。请根据检索到的内部文档回答用户问题。"
-                       "使用 Markdown 格式排版，加粗关键词，用列表组织内容。"),
-            ("user", "内部文档检索结果：\n{rag_result}\n\n用户问题：{input}")
-        ])
-        chain = prompt | llm
-        response = chain.invoke({"rag_result": rag_result, "input": task})
-    else:
-        # DP: 新增联网搜索兜底 — RAG 没命中时自动用 DuckDuckGo 搜索
-        print(f"[ChatRAG] ❌ RAG未命中，第二步：联网搜索（DuckDuckGo）...")
-        web_success = False
-        try:
-            web_result = search_web(task)
-            if web_result and len(str(web_result)) > 20:
-                web_success = True
-                print(f"[ChatRAG] ✅ 联网搜索成功（{len(str(web_result))}字符）")
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", "你是一个专业的 AI 助手。请根据联网搜索结果回答用户问题。"
-                               "使用 Markdown 格式。尽量注明信息来源。"),
-                    ("user", "联网搜索结果：\n{web_result}\n\n用户问题：{input}")
-                ])
-                chain = prompt | llm
-                response = chain.invoke({"web_result": web_result, "input": task})
-        except Exception as e:
-            print(f"[ChatRAG] 联网搜索失败: {e}")
-
-        if not web_success:
-            print(f"[ChatRAG] ❌ 联网也失败，第三步：LLM 裸答...")
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", "你是一个友好专业的企业 AI 助手，请简洁地回答用户的问题。"),
-                ("user", "{input}")
-            ])
-            chain = prompt | llm
-            response = chain.invoke({"input": task})
-
-    print(f"[ChatRAG] ⏱️  总耗时: {time.time()-t_start:.1f}秒")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "你是一个友好专业的 AI 助手，请用中文简洁回答用户的问题。使用 Markdown 格式。"),
+        ("user", "{input}")
+    ])
+    chain = prompt | llm
+    response = await chain.ainvoke({"input": task}, config=config)
     return {"research_info": response.content}
 
 
-# ==================== ③ 代码执行节点 ====================
-# DP: 新增自动剥离 Markdown 标记 + 重试计数器
-
+# 代码执行节点 — 剥离 markdown 包裹后隔离沙盒运行
 def execute_node(state: AgentState) -> dict:
-    """
-    把 Coder 生成的代码扔进沙盒运行。
-    自动处理两个问题：
-    1. 剥离 Markdown 代码块标记（```python ... ```）→ 避免 SyntaxError
-    2. 递增重试计数器 → 防止无限循环
-    """
     code = state.get("code", "")
     if not code:
         return {"execution_result": "错误：没有可执行的代码。"}
 
-    # DP: 自动剔除 ```python 和 ``` 包裹，否则 subprocess 会报 SyntaxError
-    code = code.strip()
-    if code.startswith("```"):
-        lines = code.split("\n")
-        if lines[0].startswith("```"):
-            lines = lines[1:]       # 去掉开头的 ```python
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]      # 去掉结尾的 ```
-        code = "\n".join(lines)
-
-    result = run_code_safely(code)
-    retry_count = state.get("retry_count", 0) + 1  # DP: 递增重试计数
-    return {"execution_result": result, "retry_count": retry_count}
-
-
-# ==================== ④ 审查决策 ====================
-# DP: 新增 save_code 分支 — 通过后先保存代码再结束
-
-def review_decision(state: AgentState) -> Literal["save_code", "code_node", "__end__"]:
-    """
-    Reviewer 审查完毕后的分流逻辑：
-    - 代码通过（PASS）→ 保存代码到文件 → 结束
-    - 重试次数 ≥ 2 → 不再重试，结束
-    - 否则 → 打回 Coder 重新写
-    """
-    feedback = state.get("feedback", "")
-    retry_count = state.get("retry_count", 0)
-
-    if "PASS" in feedback:
-        print("[Reviewer] 代码审查通过，保存代码文件...")
-        return "save_code"          # DP: 新增路径 → 先保存再结束
-    if retry_count >= 2:
-        print("[Reviewer] 已达最大重试次数，管线结束。")
-        return "__end__"
-
-    print(f"[Reviewer] 需要修改（第 {retry_count + 1}/2 次重试），打回 Coder。")
-    return "code_node"
-
-
-# ==================== ④½ 代码保存节点 ====================
-# DP: 全新节点 — 审查通过后自动保存代码到 generated_code/ 并打开
-
-def save_code_node(state: AgentState) -> dict:
-    """
-    审查通过后，把代码保存到 generated_code/ 文件夹。
-    自动从 task 中提取文件名，并尝试用系统默认程序打开。
-    """
-    code = state.get("code", "")
-    task = state.get("task", "untitled")
-
-    if not code:
-        return {}
-
-    # DP: 再次清理 Markdown 标记（双保险）
+    # 剥离 ```python ... ``` 包裹
     code = code.strip()
     if code.startswith("```"):
         lines = code.split("\n")
@@ -276,111 +137,133 @@ def save_code_node(state: AgentState) -> dict:
             lines = lines[:-1]
         code = "\n".join(lines)
 
-    # DP: 创建 output 目录，使用 os.path 保证跨平台兼容
-    output_dir = os.path.join(os.getcwd(), "generated_code")
+    result = run_code_safely(code)  # 隔离沙盒执行
+    retry_count = state.get("retry_count", 0) + 1
+    return {"execution_result": result, "retry_count": retry_count}
+
+
+# 审查决策 — PASS 保存，失败打回重试（最多2次），前端代码跳过执行直接通过
+def review_decision(state: AgentState) -> Literal["save_code", "code_node", "__end__"]:
+    feedback = state.get("feedback", "")
+    execution_result = state.get("execution_result", "")
+    retry_count = state.get("retry_count", 0)
+
+    # 前端代码跳过 Python 执行是正常的，不需要重试
+    if "前端代码" in execution_result or "跳过Python沙盒" in execution_result:
+        print("[Reviewer] [OK] 前端代码无需Python执行，直接保存")
+        return "save_code"
+
+    if "PASS" in feedback:
+        print("[Reviewer] [OK] 审查通过，保存代码...")
+        return "save_code"
+    if retry_count >= 2:
+        print("[Reviewer] [WARN] 已达最大重试次数，管线结束。")
+        return "__end__"
+
+    print(f"[Reviewer] [RETRY] 需要修改（第 {retry_count + 1}/2 次），打回 Coder。")
+    return "code_node"
+
+
+# 代码保存节点 — 落盘到 completed_code/，自动识别语言选扩展名，并打开编辑器
+def save_code_node(state: AgentState) -> dict:
+    code = state.get("code", "")
+    task = state.get("task", "untitled")
+    if not code:
+        return {}
+
+    # 剥离 markdown 包裹，同时提取语言标记
+    code = code.strip()
+    lang = ""
+    if code.startswith("```"):
+        lines = code.split("\n")
+        if lines[0].startswith("```"):
+            lang = lines[0][3:].strip().lower()  # 提取语言标记
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        code = "\n".join(lines)
+
+    # 根据语言标记或内容特征决定扩展名（Python 标记优先，防误判）
+    first_line = code.split('\n')[0].strip() if code else ''
+    is_python_code = first_line.startswith(('def ', 'import ', 'from ', 'class ', '#', '"""'))
+    code_lower = code[:200].lower()
+
+    if is_python_code:
+        ext = ".py"  # Python 代码优先
+    elif lang in ("html", "htm") or "<!doctype html" in code_lower or "<html" in code_lower:
+        ext = ".html"
+    elif lang in ("js", "javascript") or "document.queryselector" in code_lower:
+        ext = ".js"
+    elif lang in ("css",):
+        ext = ".css"
+    elif lang in ("tsx", "jsx", "ts", "react"):
+        ext = ".tsx" if lang == "tsx" else ".jsx" if lang == "jsx" else ".ts"
+    else:
+        ext = ".py"  # 默认 Python
+
+    output_dir = os.path.join(os.getcwd(), "completed_code")
     os.makedirs(output_dir, exist_ok=True)
 
-    # DP: 从任务描述提取文件名 + 时间戳
+    # 安全文件名
     safe_name = re.sub(r'[^\w]', '_', task)[:20].strip('_')
     if not safe_name:
         safe_name = "script"
     timestamp = datetime.now().strftime("%m%d_%H%M%S")
-    filename = os.path.join(output_dir, f"{safe_name}_{timestamp}.py")
+    filename = os.path.join(output_dir, f"{safe_name}_{timestamp}{ext}")
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(code)
 
     abs_path = os.path.abspath(filename)
-    print(f"[SaveCode] ✅ 代码已保存到: {abs_path}（{len(code)} 字符）")
+    print(f"[SaveCode] [OK] 已保存: {abs_path}")
 
-    # DP: 自动用系统默认程序打开（os.startfile 在 Windows 上可打开任何文件）
+    # 自动打开 — HTML 用浏览器，Python 用编辑器
     try:
         if os.name == "nt":
-            os.startfile(abs_path)
-            print(f"[SaveCode] 📂 已自动打开文件: {abs_path}")
+            os.startfile(abs_path)  # Windows 自动用默认程序打开（.html→浏览器，.py→编辑器）
         elif hasattr(os, 'uname') and os.uname().sysname == "Darwin":
             subprocess.run(["open", abs_path])
         else:
             subprocess.run(["xdg-open", abs_path])
     except Exception as e:
-        print(f"[SaveCode] ⚠️  无法自动打开（文件已保存，请手动打开）: {e}")
-        print(f"[SaveCode] 文件路径: {abs_path}")
+        print(f"[SaveCode] [WARN] 自动打开失败: {e}")
 
-    return {"research_info": f"✅ 代码已保存到 `{abs_path}`，已自动打开编辑器。"}
-
-
-# ==================== ⑤ 调研后置判断：需要写代码吗？ ====================
-# DP: 全新节点 — 查资料类问题跳过编码管线，只让写代码的任务走 Coder
-
-def need_code_decision(state: AgentState) -> Literal["code_node", "__end__"]:
-    """
-    Researcher 调研完毕后，看看 Planner 的计划是否要求写代码：
-    - 计划说"无需编码" → 直接结束，跳过 Coder/Execute/Reviewer
-    - 计划说要写代码 → 进入编码管线
-    """
-    plan = state.get("plan", "")
-    if "无需编码" in plan or "SIMPLE_QUERY" in plan:
-        print("[Decision] ✅ 计划明确不需要编码，直接结束（跳过编码管线）")
-        return "__end__"
-    else:
-        print("[Decision] 📝 计划要求编写代码，进入编码管线")
-        return "code_node"
+    open_type = "浏览器" if ext == ".html" else "编辑器"
+    return {"research_info": f"[OK] 代码已生成并保存：\n`{abs_path}`\n\n系统已自动用{open_type}打开！"}
 
 
-# ==================== 🏗️ 组装工作流图 ====================
-
+# ==================== [BUILD] 组装工作流图 ====================
 workflow = StateGraph(AgentState)
 
-# 注册所有节点
-workflow.add_node("chat_rag_node", chat_rag_node)        # 简单问答 + RAG + 联网搜索
-workflow.add_node("plan_node", plan_node)                 # 规划 Agent
-workflow.add_node("research_node", research_node)         # 调研 Agent（百度/B站/DuckDuckGo/内部文档）
-workflow.add_node("code_node", code_node)                 # 编码 Agent
-workflow.add_node("execute_node", execute_node)           # 沙盒执行
-workflow.add_node("review_node", review_node)             # 审查 Agent
-workflow.add_node("save_code_node", save_code_node)       # DP: 新增 — 保存代码到文件
+workflow.add_node("chat_rag_node", chat_rag_node)
+workflow.add_node("plan_node", plan_node)
+workflow.add_node("research_node", research_node)
+workflow.add_node("code_node", code_node)
+workflow.add_node("execute_node", execute_node)
+workflow.add_node("review_node", review_node)
+workflow.add_node("save_code_node", save_code_node)
 
-# 入口：路由裁判 → 分流
+# 入口：Router 分发
 workflow.set_conditional_entry_point(
     router_judge,
-    {
-        "chat_rag": "chat_rag_node",   # → 简单路径
-        "planner": "plan_node"         # → 复杂路径
-    }
+    {"chat_rag": "chat_rag_node", "planner": "plan_node"}
 )
 
-# 简单路径：直接回答 → 结束
+# 对话通道：回答完就结束
 workflow.add_edge("chat_rag_node", END)
 
-# 复杂路径：规划 → 调研 → 编码 → 执行 → 审查
+# 编码管线：规划 → 调研 → 编码 → 执行 → 审查
 workflow.add_edge("plan_node", "research_node")
-
-# DP: 调研后判断（原来是固定走 Coder，现在看情况跳过编码）
-workflow.add_conditional_edges(
-    "research_node",
-    need_code_decision,
-    {
-        "code_node": "code_node",    # 需要写代码 → 进入编码管线
-        "__end__": END               # 不需要 → 直接结束
-    }
-)
-
+workflow.add_edge("research_node", "code_node")  # 去掉 need_code_decision，调研完直接编码
 workflow.add_edge("code_node", "execute_node")
 workflow.add_edge("execute_node", "review_node")
 
-# DP: 审查后分流（新增 save_code 路径）
+# 审查分支：通过 → 保存，失败 → 重试/结束
 workflow.add_conditional_edges(
     "review_node",
     review_decision,
-    {
-        "save_code": "save_code_node",   # DP: 通过 → 先保存代码
-        "code_node": "code_node",        # 打回 Coder 重写
-        "__end__": END                   # 达到最大重试 → 结束
-    }
+    {"save_code": "save_code_node", "code_node": "code_node", "__end__": END}
 )
 
-# DP: 保存完代码 → 结束
 workflow.add_edge("save_code_node", END)
-
-# 编译导出 → 供 server_app.py 调用
 app_graph = workflow.compile()

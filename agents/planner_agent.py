@@ -1,54 +1,48 @@
 """
 ================================================================================
-🧠 Planner Agent — AI 项目经理
+[LLM] Planner Agent — AI 项目经理
 ================================================================================
 
-职责：分析用户任务，判断是简单问答还是复杂工程任务。
-- 简单任务 → 返回 "SIMPLE_QUERY: 无需编码"
-- 复杂任务 → 输出分步执行计划，交给 Researcher 去调研
-
-DP 改动：提示词从英文改为中文，判断逻辑更精准
+职责：Router 已经判定这是编码/搜索任务，Planner 负责拆解为分步执行计划。
+不再输出"无需编码"——那个判断 Router 已经做了。
 """
 
 from langchain_openai import ChatOpenAI
 from core.config import settings
 
-import os
-
 llm = ChatOpenAI(
-    model="qwen-turbo",
-    api_key=os.environ.get("DASHSCOPE_API_KEY"),
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    temperature=0.7  # 如果你原来有 temperature 等参数，可以保留
+    model=settings.MODEL_NAME,
+    api_key=settings.API_KEY,
+    base_url=settings.BASE_URL,
+    temperature=0.7,
+    streaming=True
 )
 
 
+# 计划节点 — Router 已判定需要编码，直接拆解为分步计划
 def plan_node(state: dict):
-    """
-    被 LangGraph 工作流调用的入口函数。
-    输入：state["task"]  = 用户原始输入
-    输出：{"plan": "..."} → 写入共享 state，传递给 Researcher
-    """
-    task = state.get("task", "")
-    history_info = state.get("research_info", "")
+    task = state.get("task", "")  # 用户原始输入
+    history_info = state.get("research_info", "")  # 历史上下文
 
-    # DP: 提示词全部中文，分类更清晰
     prompt = f"""
-你是一个资深的 AI 项目经理。
-
-【历史上下文】：
-{history_info if history_info else "无"}
+你是一个资深的 AI 项目经理。用户任务已经过 Router 判定，确认需要执行以下之一：
+- 编写代码 / 开发程序
+- 搜索实时信息 / 最新动态
 
 【用户任务】：
 {task}
 
-执行规则：
-1. 如果任务只是简单的【问答、查资料、闲聊】（比如"迟到怎么罚"、"今天有什么新闻"、"画个爱心"），
-   请直接输出："SIMPLE_QUERY: 无需编码"
-2. 如果任务需要【编写代码、开发程序】（比如"写一个贪吃蛇"、"帮我写个爬虫"），
-   请输出简洁的分步执行计划。
-3. 禁止输出寒暄、反问或废话，直接给出判断结果。
+【历史上下文】：
+{history_info if history_info else "无"}
+
+请输出简洁的分步执行计划（3-5 步），包括：
+- 需要调研哪些技术点
+- 代码需要哪些功能模块
+- 特殊注意事项
+
+如果是搜索实时信息的任务，输出搜索计划而非编码计划。
+禁止输出"无需编码"这类判断——Router 已经做过了。
 """
 
-    response = llm.invoke(prompt)
+    response = llm.invoke(prompt)  # 同步调用 LLM
     return {"plan": response.content}
