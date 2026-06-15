@@ -61,7 +61,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/iphone15p/Enterprise-Agent.git
+git clone https://github.com/Johnny-rdq/Enterprise-Agent.git
 cd Enterprise-Agent
 
 # 2. 创建虚拟环境
