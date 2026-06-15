@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
 import MessageInput from './MessageInput';
 
-export default function ChatArea({ title, messages, isStreaming, onSend, onStop, welcomeMsg, sidebarOpen, onToggleSidebar }) {
+export default function ChatArea({ title, messages, isStreaming, onSend, onStop, sidebarOpen, onToggleSidebar }) {
   const containerRef = useRef(null);
   const userScrolledUpRef = useRef(false);
 
@@ -62,7 +62,6 @@ export default function ChatArea({ title, messages, isStreaming, onSend, onStop,
               <p className="text-gray-400 text-sm max-w-md">
                 四位 AI Agent 接力协作：规划 → 调研 → 编码 → 审查
               </p>
-              <p className="text-gray-500 text-xs">{welcomeMsg}</p>
             </div>
           </div>
         ) : (

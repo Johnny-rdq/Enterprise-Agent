@@ -186,7 +186,7 @@ export default function App() {
       {sidebarOpen && (
         <Sidebar sessions={sessions} currentId={currentId} onSwitch={handleSwitch} onCreate={handleCreate} onDelete={remove} onToggle={() => setSidebarOpen(false)} />
       )}
-      <ChatArea title={currentTitle} messages={chatHistory} isStreaming={isStreaming} onSend={sendMessage} onStop={stopStreaming} welcomeMsg="试试问我：'什么是AI？' 或 '写一个贪吃蛇游戏'" sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(v => !v)} />
+      <ChatArea title={currentTitle} messages={chatHistory} isStreaming={isStreaming} onSend={sendMessage} onStop={stopStreaming} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(v => !v)} />
     </div>
   );
 }
