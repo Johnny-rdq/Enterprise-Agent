@@ -157,7 +157,7 @@ async def run_agent(req: AgentRequest):
 
                     field_map = {
                         "execute_node": ("execution_result", "result"),
-                        "save_code_node": ("research_info", "result"),
+                        "save_code_node": ("context_output", "result"),
                     }
                     if node_name in field_map:
                         field, msg_type = field_map[node_name]

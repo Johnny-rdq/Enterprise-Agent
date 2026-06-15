@@ -26,7 +26,7 @@ def research_node(state: dict):
 
     # 简单任务直接传计划
     if len(task) < 100 and len(plan) < 500:
-        return {"research_info": f"任务：{task}\n计划：{plan}"}
+        return {"context_output": f"任务：{task}\n计划：{plan}"}
 
     # 复杂任务让 LLM 精简
     prompt = f"""你是技术资料整理员。请将以下计划精简为 Coder 能直接使用的要点（3-5条）。
@@ -36,4 +36,4 @@ def research_node(state: dict):
 
 只输出要点列表，不要废话。"""
     msg = llm.invoke(prompt)
-    return {"research_info": msg.content}
+    return {"context_output": msg.content}

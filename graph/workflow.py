@@ -24,7 +24,7 @@ from tools.execute_tool import run_code_safely
 
 class AgentState(TypedDict, total=False):
     task: str
-    research_info: str
+    context_output: str  # 管线最终输出的内容（对话回复 / 保存确认 / 精简计划）
     plan: str
     code: str
     execution_result: str
@@ -118,7 +118,7 @@ async def chat_rag_node(state: AgentState, config: dict = None) -> dict:
     ])
     chain = prompt | llm
     response = await chain.ainvoke({"input": task}, config=config)
-    return {"research_info": response.content}
+    return {"context_output": response.content}
 
 
 # 代码执行节点 — 剥离 markdown 包裹后隔离沙盒运行
@@ -229,7 +229,7 @@ def save_code_node(state: AgentState) -> dict:
         print(f"[SaveCode] [WARN] 自动打开失败: {e}")
 
     open_type = "浏览器" if ext == ".html" else "编辑器"
-    return {"research_info": f"[OK] 代码已生成并保存：\n`{abs_path}`\n\n系统已自动用{open_type}打开！"}
+    return {"context_output": f"[OK] 代码已生成并保存：\n`{abs_path}`\n\n系统已自动用{open_type}打开！"}
 
 
 # ==================== [BUILD] 组装工作流图 ====================

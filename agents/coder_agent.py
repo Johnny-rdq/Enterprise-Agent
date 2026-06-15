@@ -3,8 +3,7 @@
 [LLM] Coder Agent — AI 程序员
 ================================================================================
 
-职责：根据计划（plan）和调研资料（research_info）编写 Python 代码。
-要求输出纯代码，严禁用 ```python 包裹（避免 SyntaxError）。
+职责：根据计划（plan）和管线上下文（context_output）编写代码。
 """
 
 from langchain_openai import ChatOpenAI
@@ -23,7 +22,7 @@ llm = ChatOpenAI(
 def code_node(state: dict):
     task = state.get("task", "")
     plan = state.get("plan", "")
-    research_info = state.get("research_info", "无附加资料")
+    context_output = state.get("context_output", "无附加资料")
 
     # 根据任务内容判断目标语言
     task_lower = task.lower()
@@ -79,7 +78,7 @@ CSS 绘图技巧：
 
 用户需求：{task}
 架构师计划：{plan}
-调研资料：{research_info}
+上下文资料：{context_output}
 
 {lang_hint}
 

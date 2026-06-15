@@ -22,7 +22,7 @@ llm = ChatOpenAI(
 # 计划节点 — Router 已判定需要编码，直接拆解为分步计划
 def plan_node(state: dict):
     task = state.get("task", "")  # 用户原始输入
-    history_info = state.get("research_info", "")  # 历史上下文
+    history_info = state.get("context_output", "")  # 历史上下文
 
     prompt = f"""
 你是一个资深的 AI 项目经理。用户任务已经过 Router 判定，确认需要执行以下之一：
