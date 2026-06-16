@@ -184,14 +184,12 @@ def save_code_node(state: AgentState) -> dict:
             lines = lines[:-1]
         code = "\n".join(lines)
 
-    # 根据语言标记或内容特征决定扩展名（Python 标记优先，防误判）
+    # 后端 根据语言标记或内容特征决定扩展名
     first_line = code.split('\n')[0].strip() if code else ''
-    is_python_code = first_line.startswith(('def ', 'import ', 'from ', 'class ', '#', '"""'))
     code_lower = code[:200].lower()
+    is_python_code = first_line.startswith(('def ', 'import ', 'from ', 'class ', '#', '"""', '#!/usr/bin/env python'))
 
-    if is_python_code:
-        ext = ".py"  # Python 代码优先
-    elif lang in ("html", "htm") or "<!doctype html" in code_lower or "<html" in code_lower:
+    if lang in ("html", "htm") or "<!doctype html" in code_lower or "<html" in code_lower:
         ext = ".html"
     elif lang in ("js", "javascript") or "document.queryselector" in code_lower:
         ext = ".js"
@@ -199,6 +197,28 @@ def save_code_node(state: AgentState) -> dict:
         ext = ".css"
     elif lang in ("tsx", "jsx", "ts", "react"):
         ext = ".tsx" if lang == "tsx" else ".jsx" if lang == "jsx" else ".ts"
+    elif lang in ("sh", "bash", "shell") or first_line.startswith(('#!/bin/bash', '#!/bin/sh', '#!/usr/bin/env bash')):
+        ext = ".sh"
+    elif lang in ("sql",) or any(code_lower.startswith(kw) for kw in ('create table', 'insert into', 'select ', 'alter table', 'drop ')):
+        ext = ".sql"
+    elif lang in ("md", "markdown") or first_line.startswith('#'):
+        ext = ".md"
+    elif lang in ("json",) or first_line.startswith(('{', '[')):
+        ext = ".json"
+    elif lang in ("yaml", "yml") or ':' in first_line and not is_python_code:
+        ext = ".yml"
+    elif lang in ("java",):
+        ext = ".java"
+    elif lang in ("go", "golang"):
+        ext = ".go"
+    elif lang in ("rs", "rust"):
+        ext = ".rs"
+    elif lang in ("cpp", "c++", "cxx"):
+        ext = ".cpp"
+    elif lang in ("c",):
+        ext = ".c"
+    elif is_python_code:
+        ext = ".py"
     else:
         ext = ".py"  # 默认 Python
 

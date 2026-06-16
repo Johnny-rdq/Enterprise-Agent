@@ -27,12 +27,12 @@ def _extract_missing_module(stderr: str) -> str | None:
     return None
 
 
-# DP 获取 pip 安装用的 Python 解释器（优先用项目 .venv）
+# 后端 获取 pip 安装用的 Python 解释器（优先用项目 .venv）
 def _get_pip_python() -> str:
-    # DP 如果当前已在 venv 中运行，直接用它
+    # 后端 如果当前已在 venv 中运行，直接用它
     if sys.prefix != sys.base_prefix:
         return sys.executable
-    # DP 尝试找项目根目录下的 .venv
+    # 后端 尝试找项目根目录下的 .venv
     _dir = os.path.dirname(os.path.abspath(__file__))  # tools/
     _project = os.path.dirname(_dir)  # 项目根
     _venv_python = os.path.join(_project, ".venv", "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(_project, ".venv", "bin", "python")
@@ -70,7 +70,7 @@ def _run_once(run_file: str, timeout: int = 15) -> tuple[bool, str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     result = subprocess.run(
-        [sys.executable, run_file],
+        [_get_pip_python(), run_file],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -90,7 +90,7 @@ def _run_gui(run_file: str) -> str:
     env["PYTHONUTF8"] = "1"
     try:
         subprocess.Popen(  # 非阻塞，窗口独立运行
-            [sys.executable, run_file],
+            [_get_pip_python(), run_file],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env
@@ -105,17 +105,24 @@ def run_code_safely(input_data: str) -> str:
     try:
         code = input_data.strip()
 
-        # 检测前端/非Python代码 → 跳过执行
-        _frontend_markers = [
+        # 后端 检测非Python代码 → 跳过沙盒执行
+        _non_python_markers = [
             "<!DOCTYPE html", "<html", "<head>", "<body", "<script", "<style",
-            "import React", "from 'react'", "from \"react\"",
+            "import React", "from 'react'", 'from "react"',
             "export default", "export function", "export const",
             "const ", "function ", "document.querySelector",
             "console.log", "console.error",
+            "#!/bin/bash", "#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/env sh",
+            "CREATE TABLE", "INSERT INTO", "SELECT ", "ALTER TABLE",
         ]
-        for marker in _frontend_markers:
+        for marker in _non_python_markers:
             if marker in code:
-                return "[INFO] 检测到前端代码（HTML/JS/CSS），已跳过Python沙盒执行。代码将直接保存为文件。"
+                return "[INFO] 检测到非Python代码，已跳过沙盒执行。代码将直接保存为文件。"
+
+        # 后端 通过首行判断类型
+        _first = code.strip().split('\n')[0].strip() if code else ''
+        if _first.startswith(('# ', '## ', '### ', '#### ')) or _first.startswith('{') or _first.startswith('['):
+            return "[INFO] 检测到非Python代码（Markdown/JSON），已跳过沙盒执行。代码将直接保存为文件。"
 
         # 判断传入的是文件路径还是代码字符串
         if input_data.endswith(".py") and len(input_data) < 255 and os.path.exists(input_data):

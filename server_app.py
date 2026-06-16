@@ -44,7 +44,7 @@ with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
     """)
     conn.commit()
 
-# DP 服务生命周期：启动时打印访问地址（用 logging 确保在 uvicorn 日志流中可见）
+# 后端 服务生命周期：启动时打印访问地址（用 logging 确保在 uvicorn 日志流中可见）
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _log = logging.getLogger("uvicorn")
@@ -66,7 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# DP 中间件：禁用浏览器缓存，确保每次拿到最新页面
+# 后端 中间件：禁用浏览器缓存，确保每次拿到最新页面
 @app.middleware("http")
 async def add_no_cache_header(request, call_next):
     response = await call_next(request)
