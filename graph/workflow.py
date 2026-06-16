@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
@@ -108,7 +109,7 @@ def router_judge(state: AgentState) -> Literal["chat_rag", "planner"]:
 
 
 # 对话节点 — 纯 LLM 对话
-async def chat_rag_node(state: AgentState, config: dict = None) -> dict:
+async def chat_rag_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     task = state["task"]
     print(f"[Chat] {task[:60]}...")
 

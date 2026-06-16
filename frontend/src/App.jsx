@@ -118,7 +118,7 @@ export default function App() {
                   }));
                 }, 3000);
               } else if (msgType === 'thinking') {
-                accThinking += msgContent;
+                accThinking = msgContent;
                 setChatHistory(prev => prev.map((item, index) => {
                   if (index === prev.length - 1) return { ...item, thinking: accThinking };
                   return item;

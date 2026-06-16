@@ -27,12 +27,27 @@ def _extract_missing_module(stderr: str) -> str | None:
     return None
 
 
+# DP 获取 pip 安装用的 Python 解释器（优先用项目 .venv）
+def _get_pip_python() -> str:
+    # DP 如果当前已在 venv 中运行，直接用它
+    if sys.prefix != sys.base_prefix:
+        return sys.executable
+    # DP 尝试找项目根目录下的 .venv
+    _dir = os.path.dirname(os.path.abspath(__file__))  # tools/
+    _project = os.path.dirname(_dir)  # 项目根
+    _venv_python = os.path.join(_project, ".venv", "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(_project, ".venv", "bin", "python")
+    if os.path.exists(_venv_python):
+        return _venv_python
+    return sys.executable  # 回退到当前 Python
+
+
 # 自动安装缺失的包
 def _auto_install(pkg: str) -> bool:
-    print(f"[ExecuteTool] 检测到缺失包: {pkg}，正在自动安装...")
+    _python = _get_pip_python()
+    print(f"[ExecuteTool] 检测到缺失包: {pkg}，正在自动安装（{_python}）...")
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg],
+            [_python, "-m", "pip", "install", pkg, "-q"],
             capture_output=True,
             text=True,
             encoding="utf-8",

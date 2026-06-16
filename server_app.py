@@ -10,6 +10,8 @@ import json
 import asyncio
 import sqlite3
 import os
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 if sys.platform == 'win32':
-    try:
+    try: # 作用：避免在某些 Windows 控制台或编码混乱的环境下，打印中文或其他非 ASCII 字符时出现 UnicodeEncodeError（如 'gbk' codec can't encode...）。
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
     except (AttributeError, OSError):
@@ -42,7 +44,19 @@ with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
     """)
     conn.commit()
 
-app = FastAPI()
+# DP 服务生命周期：启动时打印访问地址（用 logging 确保在 uvicorn 日志流中可见）
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _log = logging.getLogger("uvicorn")
+    _log.info("=" * 55)
+    _log.info("  🚀 Enterprise Agent System 已启动")
+    _log.info("  📍 本地访问: http://localhost:7860")
+    _log.info("  📍 局域网访问: http://0.0.0.0:7860")
+    _log.info("=" * 55)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,7 +66,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# DP 中间件：禁用浏览器缓存，确保每次拿到最新页面
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "demo_token")
+
 
 class AgentRequest(BaseModel):
     task: str = "Write a simple Python script."
