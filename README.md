@@ -118,10 +118,14 @@ python server_app.py
 镜像已内置国内镜像源（清华 Debian + 清华 PyPI），构建和安装依赖无需科学上网。
 
 ```bash
-# 构建镜像
+# 1. 配置环境变量（必须，否则 API 调用失败）
+cp .env.example .env
+# 编辑 .env，填入你的 API_KEY（DashScope 密钥），其余默认即可
+
+# 2. 构建镜像
 docker build -t enterprise-agent .
 
-# 运行容器（挂载 completed_code 到宿主机，代码生成后直接落盘到本地）
+# 3. 运行容器（挂载 completed_code 到宿主机）
 docker run -d --name enterprise-agent \
   -p 7860:7860 \
   --env-file .env \
@@ -140,7 +144,7 @@ docker run -d --name enterprise-agent \
 |--------|------|--------|
 | `API_KEY` | LLM API 密钥 | — |
 | `BASE_URL` | API 接口地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `MODEL_NAME` | 大模型名称 | `qwen-max` |
+| `MODEL_NAME` | 大模型名称 | `qwen-turbo`（推荐）/ `qwen-plus` / `qwen-max` |
 | `AUTH_TOKEN` | 前端访问令牌 | `demo_token` |
 
 ## API 端点
