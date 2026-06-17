@@ -115,13 +115,24 @@ python server_app.py
 
 ## Docker 部署
 
+镜像已内置国内镜像源（清华 Debian + 清华 PyPI），构建和安装依赖无需科学上网。
+
 ```bash
 # 构建镜像
 docker build -t enterprise-agent .
 
-# 运行容器
-docker run -p 7860:7860 --env-file .env enterprise-agent
+# 运行容器（挂载 completed_code 到宿主机，代码生成后直接落盘到本地）
+docker run -d --name enterprise-agent \
+  -p 7860:7860 \
+  --env-file .env \
+  -v "$(pwd)/completed_code:/code/completed_code" \
+  enterprise-agent
+
+# 如需持久化聊天历史（SQLite），追加挂载 data 目录：
+# -v "$(pwd)/data:/code/data"
 ```
+
+> **注意：** Docker 容器内无图形界面，pygame 等 GUI 程序会静默执行（无法弹窗），普通 Python 脚本正常执行并返回结果。
 
 ### 环境变量
 
@@ -191,6 +202,7 @@ docker run -p 7860:7860 --env-file .env enterprise-agent
 ├── server_app.py            # FastAPI 应用入口 + SSE 端点
 ├── temp_execution.py        # 临时执行脚本
 ├── Dockerfile
+├── .dockerignore
 ├── requirements.txt
 └── .env.example
 ```

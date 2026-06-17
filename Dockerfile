@@ -4,7 +4,11 @@ FROM python:3.11-slim
 # 2. 设置工作目录
 WORKDIR /code
 
-# 3. 安装系统依赖（pygame 需要 SDL）
+# 3. 换用清华 Debian 镜像源（加速 apt）
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+
+# 4. 安装系统依赖（pygame 需要 SDL），带重试防止镜像偶发失败
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsdl2-2.0-0 \
     libsdl2-image-2.0-0 \
@@ -13,12 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. 安装 Python 依赖
+# 5. 安装 Python 依赖（清华 PyPI 镜像）
 COPY requirements.txt /code/requirements.txt
-RUN pip install --no-cache-dir -r /code/requirements.txt
-
-# 5. 预装常用游戏开发包
-RUN pip install --no-cache-dir pygame
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn -r /code/requirements.txt
 
 # 6. 复制项目代码
 COPY . /code

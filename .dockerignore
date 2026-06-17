@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+.git
+.gitignore
+.env
+data
+completed_code
+frontend/node_modules
+frontend/src
+*.md
+!README.md

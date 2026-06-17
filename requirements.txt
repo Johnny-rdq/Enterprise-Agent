@@ -10,3 +10,6 @@ langgraph==1.2.2
 
 # Configuration
 python-dotenv==1.0.1
+
+# Game Development
+pygame==2.6.1
